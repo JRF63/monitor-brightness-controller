@@ -1,50 +1,30 @@
-use windows::core::{Result, Interface, IInspectable, HSTRING};
+use windows::core::{Result, GUID};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
-use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::UI::Xaml::Hosting::{DesktopWindowXamlSource, WindowsXamlManager};
-use windows::Win32::System::WinRT::Xaml::{IDesktopWindowXamlSourceNative, IDesktopWindowXamlSourceNative2};
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
-use windows::UI::Xaml::Media::AcrylicBrush;
-use windows::UI::Xaml::Media::AcrylicBackgroundSource;
-use windows::UI::Xaml::VerticalAlignment;
-use windows::UI::Xaml::HorizontalAlignment;
-use windows::UI::Xaml::Controls::Orientation;
-use windows::UI::Xaml::Controls::{StackPanel, TextBlock, Slider};
-
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_SINGLETHREADED};
+use windows::Win32::UI::Controls::RichEdit::WM_CONTEXTMENU;
+use windows::Win32::UI::Shell::NIN_SELECT;
+use windows::Win32::UI::WindowsAndMessaging::*;
+
+mod icon;
+mod monitor;
+mod resources;
+mod xaml;
+
+#[cfg(debug_assertions)]
+const ICON_GUID: GUID = GUID::from_u128(0xe8bd1019_8a41_421d_bb5c_7b4ade6bbd9b);
+
+#[cfg(not(debug_assertions))]
+const ICON_GUID: GUID = GUID::from_u128(0x58eac4e5_34c3_49bb_90b6_fd86751edbad);
 
 const MAIN_WINDOW_CLASS: PSTR = PSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8);
 const EMPTY_STRING: PSTR = PSTR(b"\0".as_ptr() as *mut u8);
+const WMAPP_NOTIFYCALLBACK: u32 = WM_APP + 1;
+const WINDOW_WIDTH: i32 = 360;
+const WINDOW_HEIGHT: i32 = 100;
 
-static mut XAML_WINDOW: HWND = HWND(0);
-
-fn create_slider(window: HWND) -> Result<()> {
-    let desktop_source = DesktopWindowXamlSource::new()?;
-    let interop: IDesktopWindowXamlSourceNative = desktop_source.cast()?;
-    unsafe {
-        interop.AttachToWindow(window)?;
-        XAML_WINDOW = interop.WindowHandle()?;
-    };
-
-    let slider = Slider::new()?;
-    slider.SetMaximum(100.0)?;
-    slider.SetMinimum(0.0)?;
-    slider.SetHeight(300.0)?;
-    slider.SetWidth(300.0)?;
-
-    let text = windows::UI::Xaml::Controls::TextBox::new()?;
-    text.SetHeader(IInspectable::try_from("WHY")?)?;
-    
-    unsafe { 
-        // SetWindowLongA(xaml_window, GWL_STYLE, WS_POPUP.0 as _);
-        SetWindowPos(XAML_WINDOW, HWND_TOPMOST, 100, 100, 300, 300, SWP_SHOWWINDOW);
-    }
-    let desktop_source: DesktopWindowXamlSource = interop.cast()?;
-    desktop_source.SetContent(slider)?;
-    Ok(())
-}
+static mut MONITORS: Vec<monitor::Monitor> = Vec::new();
 
 pub unsafe extern "system" fn window_procedure(
     hwnd: HWND,
@@ -53,19 +33,34 @@ pub unsafe extern "system" fn window_procedure(
     lparam: LPARAM,
 ) -> LRESULT {
     match umsg {
-        WM_CREATE => {
-            // dbg!(hwnd);
-            // create_slider(hwnd).unwrap();
+        // WM_CREATE => {
+        //     DefWindowProcA(hwnd, umsg, wparam, lparam)
+        // }
+        WM_DESTROY => {
+            icon::delete_icon();
+            PostQuitMessage(0);
+            LRESULT(0)
         }
-        WM_SIZE => {
-            // SetWindowPos(unsafe { XAML_WINDOW }, HWND_TOPMOST, 100, 100, 300, 300, SWP_SHOWWINDOW);
+        WMAPP_NOTIFYCALLBACK => {
+            let loword = lparam.0 as u32 & 0xffff;
+            match loword {
+                NIN_SELECT => {
+                    // super::toggle_window(hwnd);
+                }
+                WM_CONTEXTMENU => {
+                    // TODO: create context menu
+                    SendMessageA(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+                _ => (),
+            }
+            LRESULT(0)
         }
-        _ => (),
+        _ => DefWindowProcA(hwnd, umsg, wparam, lparam),
     }
-    DefWindowProcA(hwnd, umsg, wparam, lparam)
 }
 
-fn create_window(instance: HINSTANCE) -> Result<HWND> {
+fn create_window() -> Result<HWND> {
+    let instance = unsafe { GetModuleHandleA(PSTR::default()) };
     let cursor = unsafe { LoadCursorW(None, IDC_ARROW) };
     let wcex = WNDCLASSEXA {
         cbSize: std::mem::size_of::<WNDCLASSEXA>() as u32,
@@ -87,14 +82,14 @@ fn create_window(instance: HINSTANCE) -> Result<HWND> {
 
     let window = unsafe {
         CreateWindowExA(
-            WS_EX_TOOLWINDOW, // WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
+            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
             MAIN_WINDOW_CLASS,
             EMPTY_STRING,
             WS_POPUP | WS_VISIBLE,
-            100,
-            800,
-            800,
-            400,
+            360 + 62,
+            980,
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
             None,
             None,
             instance,
@@ -104,144 +99,72 @@ fn create_window(instance: HINSTANCE) -> Result<HWND> {
     if window.0 == 0 {
         return Err(windows::core::Error::from_win32());
     }
-    // unsafe {
-    //     ShowWindow(window, SW_SHOW);
-    //     UpdateWindow(window);
-    //     SetFocus(window);
-    //     COLOR_WINDOW.0 + 1
-    //     SetLayeredWindowAttributes(window, 0, 255, LWA_ALPHA);
-    //     SetLayeredWindowAttributes(window, 999, 0, LWA_COLORKEY);
-    // }
+
+    icon::add_icon(window)?;
     Ok(window)
 }
 
-fn create_controls() -> Result<StackPanel> {
-    let brush = AcrylicBrush::new()?;
-    brush.SetBackgroundSource(AcrylicBackgroundSource::HostBackdrop)?;
-    brush.SetTintColor(windows::UI::Colors::Black()?)?;
-    // let y: IInspectable = IInspectable::try_from(200.0f64)?;
-    // let x: windows::Foundation::IReference<f64> = unsafe { std::mem::transmute(y) };
-    // brush.SetTintLuminosityOpacity(x)?;
-
-    let xaml_container = StackPanel::new()?;
-    xaml_container.SetBackground(brush.clone())?;
-    
-    let text_block = TextBlock::new()?;
-    text_block.SetText(HSTRING::from("Generic PnP Monitor"))?;
-    text_block.SetVerticalAlignment(VerticalAlignment::Center)?;
-    text_block.SetHorizontalAlignment(HorizontalAlignment::Left)?;
-    // text_block.SetFontSize(48.0)?;
-
-    let slider_container = {
-        let slider_container = StackPanel::new()?;
-        slider_container.SetBackground(brush)?;
-        slider_container.SetOrientation(Orientation::Horizontal)?;
-        // slider_container.SetVerticalAlignment(VerticalAlignment::Center)?;
-        slider_container.SetHorizontalAlignment(HorizontalAlignment::Center)?;
-
-        let label1 = TextBlock::new()?;
-        label1.SetText(HSTRING::from("MM"))?;
-        label1.SetVerticalAlignment(VerticalAlignment::Center)?;
-        label1.SetHorizontalAlignment(HorizontalAlignment::Center)?;
-        label1.SetFontSize(48.0)?;
-        slider_container.Children()?.Append(label1)?;
-
-        let slider = Slider::new()?;
-        slider.SetMaximum(100.0)?;
-        slider.SetMinimum(0.0)?;
-        slider.SetHeight(300.0)?;
-        slider.SetWidth(300.0)?;
-        slider_container.Children()?.Append(slider)?;
-
-        let label2 = TextBlock::new()?;
-        label2.SetText(HSTRING::from("100"))?;
-        label2.SetVerticalAlignment(VerticalAlignment::Center)?;
-        label2.SetHorizontalAlignment(HorizontalAlignment::Center)?;
-        label2.SetFontSize(48.0)?;
-        slider_container.Children()?.Append(label2)?;
-        slider_container
-    };
-
-    xaml_container.Children()?.Append(text_block)?;
-    xaml_container.Children()?.Append(slider_container)?;
-    xaml_container.UpdateLayout()?;
-
-    Ok(xaml_container)
+fn set_monitor_brightness(index: usize, brightness: u32) {
+    let expo_backoff = [10, 20, 40, 80, 160];
+    if let Some(monitor) = unsafe { MONITORS.get_mut(index) } {
+        for duration in expo_backoff {
+            if monitor.set_brightness(brightness).is_ok() {
+                break;
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(duration));
+            }
+        }
+    }
 }
 
 fn main() -> Result<()> {
-    
-    let instance = unsafe { GetModuleHandleA(PSTR::default()) };
-    let window = create_window(instance)?;
+    let window = create_window()?;
 
     unsafe {
         RoInitialize(RO_INIT_SINGLETHREADED)?;
     }
-    let _manager = WindowsXamlManager::InitializeForCurrentThread()?;
 
-    let desktop_source = DesktopWindowXamlSource::new()?;
-    let interop: IDesktopWindowXamlSourceNative = desktop_source.clone().cast()?;
-    let xaml_window = unsafe {
-        interop.AttachToWindow(window)?;
-        interop.WindowHandle()?
-    };
+    let xaml_controls = xaml::XamlControls::new(window)?;
     unsafe {
-        // SetWindowLongA(xaml_window, GWL_EXSTYLE, WS_EX_LAYERED.0 as i32);
-        // SetLayeredWindowAttributes(xaml_window, 0, 0, LWA_ALPHA);
-        SetWindowPos(xaml_window, HWND(0), 0, 0, 800, 200, SWP_SHOWWINDOW);
-    }
-
-    let xaml_container = create_controls()?;
-    
-    desktop_source.SetContent(xaml_container)?;
-
-    // unsafe {
-    //     ShowWindow(window, SW_HIDE);
-    //     UpdateWindow(window);
-    // }
-
-    // std::thread::sleep(std::time::Duration::from_millis(1000));
-
-    unsafe {
+        SetWindowPos(
+            xaml_controls.window(),
+            HWND(0),
+            0,
+            0,
+            360,
+            100,
+            SWP_SHOWWINDOW,
+        );
         ShowWindow(window, SW_SHOW);
         UpdateWindow(window);
     }
-    
-    // // let brush = windows::UI::Xaml::Media::AcrylicBrush::new()?;
-    // let extra_styles = WS_TABSTOP;
-    // let style = unsafe { GetWindowLongA(xaml_window, GWL_STYLE) as u32 | extra_styles.0 };
-    // unsafe { SetWindowLongA(xaml_window, GWL_STYLE, style as i32); }
 
-    // let slider = Slider::new()?;
-    // slider.SetMaximum(100.0)?;
-    // slider.SetMinimum(0.0)?;
-    // slider.SetHeight(300.0)?;
-    // slider.SetWidth(300.0)?;
-    
-    // desktop_source.SetContent(slider)?;
-    // unsafe { ShowWindow(xaml_window, SW_SHOW); }
+    unsafe {
+        MONITORS = monitor::Monitor::get_monitors()?;
+    }
+    if let Some(monitor) = unsafe { MONITORS.first() } {
+        let brightness = monitor.get_brightness();
+        icon::modify_icon_tooltip(brightness)?;
+    }
 
-    // let interop2: IDesktopWindowXamlSourceNative2 = interop.clone().cast()?;
-
-    // let mut msg = MSG::default();
-    // unsafe {
-    //     while GetMessageA(&mut msg, HWND::default(), 0, 0).as_bool() {
-    //         let mut result = BOOL(0);
-    //         interop2.PreTranslateMessage(&msg, &mut result)?;
-    //         if !result.as_bool() {
-    //             TranslateMessage(&msg);
-    //             DispatchMessageA(&msg);
-    //         }
-    //     }
-    // }
+    xaml_controls.slider_value_changed(|_caller, args| {
+        if let Some(args) = args {
+            let brightness = args.NewValue()? as u32;
+            // set_monitor_brightness(0, brightness);
+            icon::modify_icon_tooltip(brightness)?;
+        }
+        Ok(())
+    })?;
 
     let mut msg = MSG::default();
     unsafe {
         while GetMessageA(&mut msg, HWND::default(), 0, 0).as_bool() {
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
+            if !xaml_controls.filter_message(&msg) {
+                TranslateMessage(&msg);
+                DispatchMessageA(&msg);
+            }
         }
     }
-    
+
     Ok(())
 }
