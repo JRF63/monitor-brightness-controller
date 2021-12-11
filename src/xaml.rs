@@ -1,5 +1,4 @@
 use windows::core::{IInspectable, Interface, Result, HSTRING};
-use windows::Foundation::EventRegistrationToken;
 use windows::Win32::Foundation::{BOOL, HWND};
 use windows::Win32::System::WinRT::Xaml::{
     IDesktopWindowXamlSourceNative, IDesktopWindowXamlSourceNative2,
@@ -11,16 +10,16 @@ use windows::UI::Xaml::{
         Primitives::{RangeBaseValueChangedEventArgs, RangeBaseValueChangedEventHandler},
         Slider, StackPanel, TextBlock,
     },
-    HorizontalAlignment,
     Hosting::{DesktopWindowXamlSource, WindowsXamlManager},
     Media::{AcrylicBackgroundSource, AcrylicBrush},
     TextAlignment, Thickness, VerticalAlignment,
 };
 
+mod image;
+
 pub struct XamlControls {
     manager: WindowsXamlManager,
     source: IDesktopWindowXamlSourceNative2,
-    parent: HWND,
     window: HWND,
     controls: StackPanel,
 }
@@ -51,7 +50,6 @@ impl XamlControls {
         Ok(XamlControls {
             manager,
             source,
-            parent,
             window,
             controls,
         })
@@ -62,11 +60,6 @@ impl XamlControls {
     }
 
     pub fn slider(&self) -> Result<Slider> {
-        if self.controls.FindName(HSTRING::from("monitor_name")).is_ok() {
-            println!("Found monitor_name");
-        } else {
-            println!("Did not find monitor_name");
-        }
         let main_elements = self.controls.Children()?;
         for i in 0..main_elements.Size()? {
             if let Ok(slider_container) = main_elements.GetAt(i)?.cast::<StackPanel>() {
@@ -77,28 +70,33 @@ impl XamlControls {
                     }
                 }
             }
+        }
+        Err(windows::core::Error::from_win32())
+    }
 
+    pub fn monitor_name(&self) -> Result<TextBlock> {
+        let main_elements = self.controls.Children()?;
+        for i in 0..main_elements.Size()? {
             if let Ok(monitor_name) = main_elements.GetAt(i)?.cast::<TextBlock>() {
-                println!("TextBlock name: {}", monitor_name.Name()?);
+                return Ok(monitor_name);
             }
         }
         Err(windows::core::Error::from_win32())
     }
 
-    pub fn slider_value_changed<
-        'a,
-        F: FnMut(
-                &Option<IInspectable>,
-                &Option<RangeBaseValueChangedEventArgs>,
-            ) -> ::windows::core::Result<()>
-            + 'static,
-    >(
-        &'a self,
-        callback: F,
-    ) -> Result<EventRegistrationToken> {
-        let callback = RangeBaseValueChangedEventHandler::new(callback);
-        let slider = self.slider()?;
-        slider.ValueChanged(callback)
+    pub fn brightness_number(&self) -> Result<TextBlock> {
+        let main_elements = self.controls.Children()?;
+        for i in 0..main_elements.Size()? {
+            if let Ok(slider_container) = main_elements.GetAt(i)?.cast::<StackPanel>() {
+                let container_children = slider_container.Children()?;
+                for j in 0..container_children.Size()? {
+                    if let Ok(brightness_number) = container_children.GetAt(j)?.cast::<TextBlock>() {
+                        return Ok(brightness_number);
+                    }
+                }
+            }
+        }
+        Err(windows::core::Error::from_win32())
     }
 
     pub fn filter_message(&self, message: *const MSG) -> bool {
@@ -111,17 +109,28 @@ impl XamlControls {
         false
     }
 
+    pub fn create_slider_callback<
+        'a,
+        F: FnMut(
+                &Option<IInspectable>,
+                &Option<RangeBaseValueChangedEventArgs>,
+            ) -> ::windows::core::Result<()>
+            + 'static,
+    >(callback: F) -> RangeBaseValueChangedEventHandler {
+        RangeBaseValueChangedEventHandler::new(callback)
+    }
+
     fn create_controls() -> Result<StackPanel> {
         let brush = AcrylicBrush::new()?;
         brush.SetBackgroundSource(AcrylicBackgroundSource::HostBackdrop)?;
         brush.SetTintColor(windows::UI::Colors::Black()?)?;
+
         let xaml_container = StackPanel::new()?;
         xaml_container.SetBackground(brush.clone())?;
+        // xaml_container.SetShadow(windows::UI::Xaml::Media::ThemeShadow::new()?)?;
 
         // 360x44
         let monitor_name = TextBlock::new()?;
-        monitor_name.SetName(HSTRING::from("monitor_name"))?;
-        println!("TextBlock name: {}", monitor_name.Name()?);
         monitor_name.SetText(HSTRING::from("Speakers (Logitech USB Headset)"))?;
         monitor_name.SetMargin(Thickness {
             Left: 12.0,
@@ -150,20 +159,36 @@ impl XamlControls {
 
             let font_size = 23.5;
 
-            // 67x55
-            let dummy = TextBlock::new()?;
-            dummy.SetText(HSTRING::from("60"))?;
-            dummy.SetTextAlignment(TextAlignment::Center)?;
-            dummy.SetVerticalAlignment(VerticalAlignment::Center)?;
-            dummy.SetFontSize(font_size)?;
-            dummy.SetWidth(width)?;
+            // let uri = windows::Foundation::Uri::CreateUri(HSTRING::from("pack://application:,,,/Resources/notification.ico"))?;
+            // let uri = windows::Foundation::Uri::CreateUri(HSTRING::from("pack://application:,,,/notification.ico"))?;
+            // let bitmapimage = windows::UI::Xaml::Media::Imaging::BitmapImage::new()?;
+            // bitmapimage.SetUriSource(uri)?;
+            // println!("{}", bitmapimage.DecodePixelHeight()?);
 
-            let brightness = TextBlock::new()?;
-            brightness.SetText(HSTRING::from("60"))?;
-            brightness.SetTextAlignment(TextAlignment::Center)?;
-            brightness.SetVerticalAlignment(VerticalAlignment::Center)?;
-            brightness.SetFontSize(font_size)?;
-            brightness.SetWidth(width)?;
+            // let image = windows::UI::Xaml::Controls::Image::new()?;
+            // image.SetSource(bitmapimage)?;
+            // image.SetWidth(width)?;
+            // image.SetHeight(55.0)?;
+
+            
+            // let image = windows::UI::Xaml::Controls::SymbolIcon::new()?;
+            // image.SetSymbol(windows::UI::Xaml::Controls::Symbol::World)?;
+            let image = image::create_image()?;
+
+            // 67x55
+            // let dummy = TextBlock::new()?;
+            // dummy.SetText(HSTRING::from("60"))?;
+            // dummy.SetTextAlignment(TextAlignment::Center)?;
+            // dummy.SetVerticalAlignment(VerticalAlignment::Center)?;
+            // dummy.SetFontSize(font_size)?;
+            // dummy.SetWidth(width)?;
+
+            let brightness_number = TextBlock::new()?;
+            brightness_number.SetText(HSTRING::from("60"))?;
+            brightness_number.SetTextAlignment(TextAlignment::Center)?;
+            brightness_number.SetVerticalAlignment(VerticalAlignment::Center)?;
+            brightness_number.SetFontSize(font_size)?;
+            brightness_number.SetWidth(width)?;
 
             // 246x47
             let slider = Slider::new()?;
@@ -172,9 +197,9 @@ impl XamlControls {
             slider.SetHeight(slider_height)?;
             slider.SetWidth(slider_width)?;
 
-            slider_container.Children()?.Append(dummy)?;
+            slider_container.Children()?.Append(image)?;
             slider_container.Children()?.Append(slider)?;
-            slider_container.Children()?.Append(brightness)?;
+            slider_container.Children()?.Append(brightness_number)?;
             slider_container
         };
 
