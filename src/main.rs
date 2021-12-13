@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use windows::core::{Result, GUID, HSTRING};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -28,26 +30,11 @@ const ICON_GUID: GUID = GUID::from_u128(0x58eac4e5_34c3_49bb_90b6_fd86751edbad);
 const MAIN_WINDOW_CLASS: PSTR = PSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8);
 const EMPTY_STRING: PSTR = PSTR(b"\0".as_ptr() as *mut u8);
 const WMAPP_NOTIFYCALLBACK: u32 = WM_APP + 1;
-const TIMER_LOST_FOCUS: usize = 2;
-const TIMER_BRIGHTNESS_RESET: usize = 3;
 
 enum ChannelData {
     Set(usize, u32),
     Refresh,
     Quit,
-}
-
-unsafe extern "system" fn delayed_brightness_reset(
-    hwnd: HWND,
-    _umsg: u32,
-    _idtimer: usize,
-    _dwtime: u32,
-) {
-    KillTimer(hwnd, TIMER_BRIGHTNESS_RESET);
-    let sender = get_window_proc_data(&hwnd);
-    sender
-        .send(ChannelData::Refresh)
-        .unwrap_or(( /*ignore err*/ ));
 }
 
 unsafe extern "system" fn window_procedure(
@@ -56,6 +43,9 @@ unsafe extern "system" fn window_procedure(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    const TIMER_LOST_FOCUS: usize = 2;
+    const TIMER_BRIGHTNESS_RESET: usize = 3;
+
     static mut LOST_FOCUS: bool = false;
     static mut MONITOR_TURNED_OFF: bool = false;
 
@@ -70,9 +60,19 @@ unsafe extern "system" fn window_procedure(
         }
         WM_TIMER => {
             let timer_id = wparam.0;
-            if timer_id == TIMER_LOST_FOCUS {
-                KillTimer(hwnd, TIMER_LOST_FOCUS);
-                LOST_FOCUS = false;
+            match timer_id {
+                TIMER_LOST_FOCUS => {
+                    KillTimer(hwnd, TIMER_LOST_FOCUS);
+                    LOST_FOCUS = false;
+                }
+                TIMER_BRIGHTNESS_RESET => {
+                    KillTimer(hwnd, TIMER_BRIGHTNESS_RESET);
+                    let sender = get_window_proc_data(&hwnd);
+                    sender
+                        .send(ChannelData::Refresh)
+                        .unwrap_or(( /*ignore err*/ ));
+                }
+                _ => (),
             }
             LRESULT(0)
         }
@@ -118,12 +118,7 @@ unsafe extern "system" fn window_procedure(
                     ON => {
                         if MONITOR_TURNED_OFF {
                             MONITOR_TURNED_OFF = false;
-                            SetTimer(
-                                hwnd,
-                                TIMER_BRIGHTNESS_RESET,
-                                6000,
-                                Some(delayed_brightness_reset),
-                            );
+                            SetTimer(hwnd, TIMER_BRIGHTNESS_RESET, 6000, None);
                         }
                     }
                     _ => (),
@@ -158,7 +153,7 @@ fn create_window(x: i32, y: i32, width: i32, height: i32) -> Result<HWND> {
     let cursor = unsafe { LoadCursorW(None, IDC_ARROW) };
     let wcex = WNDCLASSEXA {
         cbSize: std::mem::size_of::<WNDCLASSEXA>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW,
+        style: CS_DROPSHADOW,
         lpfnWndProc: Some(window_procedure),
         hInstance: instance,
         hCursor: cursor,
@@ -188,10 +183,11 @@ fn create_window(x: i32, y: i32, width: i32, height: i32) -> Result<HWND> {
             std::ptr::null(),
         )
     };
-    if window.0 == 0 {
-        return Err(windows::core::Error::from_win32());
+    if window.0 != 0 {
+        Ok(window)
+    } else {
+        Err(windows::core::Error::from_win32())
     }
-    Ok(window)
 }
 
 fn set_window_proc_data(hwnd: HWND, data: &Sender<ChannelData>) {
@@ -265,66 +261,46 @@ fn main() -> Result<()> {
         let mut monitors = monitors;
         let mut last_brightness: Vec<u32> = monitors.iter().map(|m| m.get_brightness()).collect();
 
-        fn parse_msg_and_continue(
-            receiver: &std::sync::mpsc::Receiver<ChannelData>,
-            msg: ChannelData,
-            monitors: &mut Vec<monitor::Monitor>,
-            last_brightness: &mut Vec<u32>,
-            recurse: bool,
-        ) -> bool {
+        let mut msg = receiver.recv().unwrap_or(ChannelData::Quit);
+        loop {
             match msg {
                 ChannelData::Set(index, brightness) => {
                     if let Some(val) = last_brightness.get_mut(index) {
                         *val = brightness;
                     }
-                    if recurse {
-                        let recv = receiver.try_recv();
-                        loop {
-                            match recv {
-                                Ok(msg) => {
-                                    return parse_msg_and_continue(
-                                        receiver,
-                                        msg,
-                                        monitors,
-                                        last_brightness,
-                                        false,
-                                    )
-                                }
-                                Err(TryRecvError::Empty) => break,
-                                Err(TryRecvError::Disconnected) => return false,
-                            }
+                    // consume channel data until TryRecvError::Empty, then set the brightness
+                    match receiver.try_recv() {
+                        Ok(try_msg) => {
+                            msg = try_msg;
+                            continue;
                         }
-
-                        let expo_backoff = [10, 20, 40, 80, 160];
-                        for (monitor, brightness) in monitors.iter_mut().zip(last_brightness.iter())
-                        {
-                            if monitor.get_brightness() != *brightness {
-                                for duration in expo_backoff {
-                                    if monitor.set_brightness(*brightness).is_ok() {
-                                        break;
+                        Err(TryRecvError::Empty) => {
+                            let expo_backoff = [10, 20, 40, 80, 160];
+                            for (monitor, brightness) in
+                                monitors.iter_mut().zip(last_brightness.iter())
+                            {
+                                if monitor.get_brightness() != *brightness {
+                                    for duration in expo_backoff {
+                                        if monitor.set_brightness(*brightness).is_ok() {
+                                            break;
+                                        }
+                                        thread::sleep(Duration::from_millis(duration));
                                     }
-                                    thread::sleep(Duration::from_millis(duration));
                                 }
                             }
                         }
+                        Err(TryRecvError::Disconnected) => break,
                     }
-                    true
                 }
                 ChannelData::Refresh => {
                     for monitor in monitors.iter_mut() {
                         let brightness = monitor.get_brightness();
                         while monitor.set_brightness(brightness).is_err() {}
                     }
-                    true
                 }
-                ChannelData::Quit => false,
+                ChannelData::Quit => break,
             }
-        }
-
-        while let Ok(msg) = receiver.recv() {
-            if !parse_msg_and_continue(&receiver, msg, &mut monitors, &mut last_brightness, true) {
-                break;
-            }
+            msg = receiver.recv().unwrap_or(ChannelData::Quit);
         }
         Ok(())
     });

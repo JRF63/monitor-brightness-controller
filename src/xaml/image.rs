@@ -4,6 +4,7 @@ use windows::Storage::Streams::Buffer;
 use windows::Win32::System::WinRT::IBufferByteAccess;
 use windows::UI::Xaml::Controls::Image;
 use windows::UI::Xaml::Media::Imaging::SoftwareBitmapSource;
+use windows::UI::Xaml::Media::Stretch;
 
 pub fn create_image() -> Result<Image> {
     const IMAGE_WIDTH: i32 = 24;
@@ -31,8 +32,7 @@ pub fn create_image() -> Result<Image> {
 
     let image = Image::new()?;
     image.SetSource(image_source)?;
-    image.SetWidth(IMAGE_WIDTH as f64)?;
-    image.SetHeight(IMAGE_HEIGHT as f64)?;
+    image.SetStretch(Stretch::None)?;
     Ok(image)
 }
 

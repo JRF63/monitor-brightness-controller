@@ -1,4 +1,4 @@
-use windows::core::{IInspectable, Interface, Result, HSTRING};
+use windows::core::{IInspectable, Interface, Result};
 use windows::Win32::Foundation::{BOOL, HWND};
 use windows::Win32::System::WinRT::Xaml::{
     IDesktopWindowXamlSourceNative, IDesktopWindowXamlSourceNative2,
@@ -127,75 +127,46 @@ impl XamlControls {
 
         let xaml_container = StackPanel::new()?;
         xaml_container.SetBackground(brush.clone())?;
-        // xaml_container.SetShadow(windows::UI::Xaml::Media::ThemeShadow::new()?)?;
 
-        // 360x44
         let monitor_name = TextBlock::new()?;
-        monitor_name.SetText(HSTRING::from("Speakers (Logitech USB Headset)"))?;
-        monitor_name.SetMargin(Thickness {
+        monitor_name.SetPadding(Thickness {
             Left: 12.0,
             Top: 12.0,
             Right: 12.0,
             Bottom: 0.0,
         })?;
-        let font_size = 15.0;
-        monitor_name.SetFontSize(font_size)?;
+        monitor_name.SetFontSize(15.0)?;
 
         let slider_container = {
             let slider_container = StackPanel::new()?;
             slider_container.SetBackground(brush)?;
             slider_container.SetOrientation(Orientation::Horizontal)?;
             slider_container.SetHeight(76.0)?;
-            let margin = 4.5;
+
             let slider_width = 232.0;
             let slider_height = 28.0;
-            let width = (360.0 - 232.0 - 2.0 * margin) / 2.0;
-            slider_container.SetMargin(Thickness {
-                Left: margin,
-                Top: 0.0,
-                Right: margin,
+            let width = (360.0 - slider_width) / 2.0;
+
+            let image = image::create_image()?;
+            image.SetWidth(width)?;
+            image.SetMargin(Thickness {
+                Left: 0.0,
+                Top: 4.0,
+                Right: 0.0,
                 Bottom: 0.0,
             })?;
 
-            let font_size = 23.5;
-
-            // let uri = windows::Foundation::Uri::CreateUri(HSTRING::from("pack://application:,,,/Resources/notification.ico"))?;
-            // let uri = windows::Foundation::Uri::CreateUri(HSTRING::from("pack://application:,,,/notification.ico"))?;
-            // let bitmapimage = windows::UI::Xaml::Media::Imaging::BitmapImage::new()?;
-            // bitmapimage.SetUriSource(uri)?;
-            // println!("{}", bitmapimage.DecodePixelHeight()?);
-
-            // let image = windows::UI::Xaml::Controls::Image::new()?;
-            // image.SetSource(bitmapimage)?;
-            // image.SetWidth(width)?;
-            // image.SetHeight(55.0)?;
-
-            
-            // let image = windows::UI::Xaml::Controls::SymbolIcon::new()?;
-            // image.SetSymbol(windows::UI::Xaml::Controls::Symbol::World)?;
-            let image = image::create_image()?;
-
-            // 67x55
-            // let dummy = TextBlock::new()?;
-            // dummy.SetText(HSTRING::from("60"))?;
-            // dummy.SetTextAlignment(TextAlignment::Center)?;
-            // dummy.SetVerticalAlignment(VerticalAlignment::Center)?;
-            // dummy.SetFontSize(font_size)?;
-            // dummy.SetWidth(width)?;
-
             let brightness_number = TextBlock::new()?;
-            brightness_number.SetText(HSTRING::from("60"))?;
+            brightness_number.SetWidth(width)?;
             brightness_number.SetTextAlignment(TextAlignment::Center)?;
             brightness_number.SetVerticalAlignment(VerticalAlignment::Center)?;
-            brightness_number.SetFontSize(font_size)?;
-            brightness_number.SetWidth(width)?;
-
-            // 246x47
+            brightness_number.SetFontSize(23.5)?;
+            
             let slider = Slider::new()?;
             slider.SetMaximum(100.0)?;
             slider.SetMinimum(0.0)?;
-            slider.SetHeight(slider_height)?;
             slider.SetWidth(slider_width)?;
+            slider.SetHeight(slider_height)?;
 
             slider_container.Children()?.Append(image)?;
             slider_container.Children()?.Append(slider)?;
