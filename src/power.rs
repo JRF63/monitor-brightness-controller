@@ -5,22 +5,24 @@ use windows::Win32::System::Power::{
 };
 use windows::Win32::System::SystemServices::GUID_CONSOLE_DISPLAY_STATE;
 
-pub fn register_for_power_notification(hwnd: HWND) -> Result<HPOWERNOTIFY> {
-    unsafe {
-        let handle =
-            RegisterPowerSettingNotification(HANDLE(hwnd.0), &GUID_CONSOLE_DISPLAY_STATE, 0);
-        if handle.0 != 0 {
-            Ok(handle)
-        } else {
-            Err(windows::core::Error::from_win32())
+pub struct PowerNotifyHandle(HPOWERNOTIFY);
+
+impl Drop for PowerNotifyHandle {
+    fn drop(&mut self) {
+        unsafe {
+            if !UnregisterPowerSettingNotification(self.0).as_bool() {
+                panic!("{:?}", windows::core::Error::from_win32());
+            }
         }
     }
 }
 
-pub fn unregister_for_power_notification(power_notify_handle: HPOWERNOTIFY) -> Result<()> {
+pub fn register_for_power_notification(hwnd: HWND) -> Result<PowerNotifyHandle> {
     unsafe {
-        if UnregisterPowerSettingNotification(power_notify_handle).as_bool() {
-            Ok(())
+        let handle =
+            RegisterPowerSettingNotification(HANDLE(hwnd.0), &GUID_CONSOLE_DISPLAY_STATE, 0);
+        if handle.0 != 0 {
+            Ok(PowerNotifyHandle(handle))
         } else {
             Err(windows::core::Error::from_win32())
         }

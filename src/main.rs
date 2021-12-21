@@ -18,7 +18,6 @@ use std::time::Duration;
 mod icon;
 mod monitor;
 mod power;
-mod resources;
 mod xaml;
 
 #[cfg(debug_assertions)]
@@ -29,7 +28,7 @@ const ICON_GUID: GUID = GUID::from_u128(0x58eac4e5_34c3_49bb_90b6_fd86751edbad);
 
 const MAIN_WINDOW_CLASS: PSTR = PSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8);
 const EMPTY_STRING: PSTR = PSTR(b"\0".as_ptr() as *mut u8);
-const WMAPP_NOTIFYCALLBACK: u32 = WM_APP + 1;
+const WM_APP_NOTIFYCALLBACK: u32 = WM_APP + 1;
 
 enum ChannelData {
     Set(usize, u32),
@@ -82,7 +81,7 @@ unsafe extern "system" fn window_procedure(
             PostQuitMessage(0);
             LRESULT(0)
         }
-        WMAPP_NOTIFYCALLBACK => {
+        WM_APP_NOTIFYCALLBACK => {
             let loword = lparam.0 as u32 & 0xffff;
             match loword {
                 NIN_SELECT => {
@@ -118,7 +117,7 @@ unsafe extern "system" fn window_procedure(
                     ON => {
                         if MONITOR_TURNED_OFF {
                             MONITOR_TURNED_OFF = false;
-                            SetTimer(hwnd, TIMER_BRIGHTNESS_RESET, 6000, None);
+                            SetTimer(hwnd, TIMER_BRIGHTNESS_RESET, 5000, None);
                         }
                     }
                     _ => (),
@@ -215,16 +214,17 @@ fn num_to_hstring(num: u32) -> HSTRING {
 }
 
 fn main() -> Result<()> {
+    // Initialize WinRT
+    unsafe {
+        RoInitialize(RO_INIT_SINGLETHREADED)?;
+    }
+
     let width = 360;
     let height = 100;
     let (x, y) = window_position(width, height);
     let window = create_window(x, y, width, height)?;
-    icon::add_icon(window)?;
-    let power_notify_handle = power::register_for_power_notification(window)?;
-
-    unsafe {
-        RoInitialize(RO_INIT_SINGLETHREADED)?;
-    }
+    let mut notification_icon = icon::create_notification_icon(window)?;
+    let _power_notify_handle = power::register_for_power_notification(window)?;
 
     let xaml_controls = xaml::XamlControls::new(window)?;
     unsafe {
@@ -246,7 +246,7 @@ fn main() -> Result<()> {
     let monitors = monitor::Monitor::get_monitors()?;
     if let Some(monitor) = monitors.first() {
         let brightness = monitor.get_brightness();
-        icon::modify_icon_tooltip(brightness)?;
+        notification_icon.modify_tooltip(brightness)?;
         monitor_name.SetText(HSTRING::from(monitor.get_name()))?;
         brightness_number.SetText(num_to_hstring(brightness))?;
         slider.SetValue2(brightness as f64)?;
@@ -257,7 +257,7 @@ fn main() -> Result<()> {
 
     set_window_proc_data(window, &window_proc_sender);
 
-    let thread_handle = thread::spawn(move || -> Result<()> {
+    let thread_handle = thread::spawn(move || {
         let mut monitors = monitors;
         let mut last_brightness: Vec<u32> = monitors.iter().map(|m| m.get_brightness()).collect();
 
@@ -302,21 +302,21 @@ fn main() -> Result<()> {
             }
             msg = receiver.recv().unwrap_or(ChannelData::Quit);
         }
-        Ok(())
     });
 
-    let slider_callback = xaml::XamlControls::create_slider_callback(move |_caller, args| {
-        if let Some(args) = args {
-            let brightness = args.NewValue()? as u32;
-            sender
-                .send(ChannelData::Set(0, brightness))
-                .unwrap_or(( /*ignore err*/ ));
-            brightness_number.SetText(num_to_hstring(brightness))?;
-            icon::modify_icon_tooltip(brightness)?;
-        }
-        Ok(())
-    });
-    let event_token = slider.ValueChanged(slider_callback)?;
+    let event_token = slider.ValueChanged(xaml::XamlControls::create_slider_callback(
+        move |_caller, args| {
+            if let Some(args) = args {
+                let brightness = args.NewValue()? as u32;
+                sender
+                    .send(ChannelData::Set(0, brightness))
+                    .unwrap_or(( /*ignore err*/ ));
+                brightness_number.SetText(num_to_hstring(brightness))?;
+                notification_icon.modify_tooltip(brightness)?;
+            }
+            Ok(())
+        },
+    ))?;
 
     let mut msg = MSG::default();
     unsafe {
@@ -328,9 +328,7 @@ fn main() -> Result<()> {
         }
     }
 
-    thread_handle.join().unwrap().unwrap();
+    thread_handle.join().unwrap();
     slider.RemoveValueChanged(event_token)?;
-    power::unregister_for_power_notification(power_notify_handle)?;
-    icon::delete_icon();
     Ok(())
 }
