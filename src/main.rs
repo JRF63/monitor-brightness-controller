@@ -11,8 +11,8 @@ use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use std::io::Write;
-use std::sync::mpsc::{channel, Sender, TryRecvError};
-use std::thread;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::thread::{self, Thread};
 use std::time::Duration;
 
 mod icon;
@@ -30,11 +30,9 @@ const MAIN_WINDOW_CLASS: PSTR = PSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8
 const EMPTY_STRING: PSTR = PSTR(b"\0".as_ptr() as *mut u8);
 const WM_APP_NOTIFYCALLBACK: u32 = WM_APP + 1;
 
-enum ChannelData {
-    Set(usize, u32),
-    Refresh,
-    Quit,
-}
+static QUIT: AtomicBool = AtomicBool::new(false);
+static UNPARKED: AtomicBool = AtomicBool::new(false);
+static mut DATA: Vec<AtomicU32> = Vec::new();
 
 unsafe extern "system" fn window_procedure(
     hwnd: HWND,
@@ -66,18 +64,15 @@ unsafe extern "system" fn window_procedure(
                 }
                 TIMER_BRIGHTNESS_RESET => {
                     KillTimer(hwnd, TIMER_BRIGHTNESS_RESET);
-                    let sender = get_window_proc_data(&hwnd);
-                    sender
-                        .send(ChannelData::Refresh)
-                        .unwrap_or(( /*ignore err*/ ));
+                    let thread = get_window_proc_data(&hwnd);
+                    UNPARKED.store(true, Ordering::Relaxed);
+                    thread.unpark();
                 }
                 _ => (),
             }
             LRESULT(0)
         }
         WM_DESTROY => {
-            let sender = get_window_proc_data(&hwnd);
-            sender.send(ChannelData::Quit).unwrap_or(( /*ignore err*/ ));
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -86,12 +81,8 @@ unsafe extern "system" fn window_procedure(
             match loword {
                 NIN_SELECT => {
                     if !LOST_FOCUS {
-                        if IsWindowVisible(hwnd).as_bool() {
-                            ShowWindow(hwnd, SW_HIDE);
-                        } else {
-                            ShowWindow(hwnd, SW_SHOW);
-                            SetForegroundWindow(hwnd);
-                        }
+                        ShowWindow(hwnd, SW_SHOW);
+                        SetForegroundWindow(hwnd);
                     }
                 }
                 WM_CONTEXTMENU => {
@@ -189,28 +180,24 @@ fn create_window(x: i32, y: i32, width: i32, height: i32) -> Result<HWND> {
     }
 }
 
-fn set_window_proc_data(hwnd: HWND, data: &Sender<ChannelData>) {
-    unsafe {
-        SetWindowLongPtrA(
-            hwnd,
-            GWLP_USERDATA,
-            data as *const Sender<ChannelData> as isize,
-        );
-    }
-}
-
-fn get_window_proc_data<'a>(hwnd: &'a HWND) -> &'a Sender<ChannelData> {
-    unsafe {
-        let ptr = GetWindowLongPtrA(*hwnd, GWLP_USERDATA) as *const Sender<ChannelData>;
-        &*ptr
-    }
-}
-
 fn num_to_hstring(num: u32) -> HSTRING {
     let mut buf: [u8; 11] = [0; 11];
     write!(&mut buf[..], "{}", num).unwrap();
     let s = std::str::from_utf8(&buf).unwrap();
     HSTRING::from(s)
+}
+
+fn set_window_proc_data(hwnd: HWND, data: &Thread) {
+    unsafe {
+        SetWindowLongPtrA(hwnd, GWLP_USERDATA, data as *const Thread as isize);
+    }
+}
+
+fn get_window_proc_data<'a>(hwnd: &'a HWND) -> &'a Thread {
+    unsafe {
+        let ptr = GetWindowLongPtrA(*hwnd, GWLP_USERDATA) as *const Thread;
+        &*ptr
+    }
 }
 
 fn main() -> Result<()> {
@@ -244,6 +231,12 @@ fn main() -> Result<()> {
     let slider = xaml_controls.slider()?;
 
     let monitors = monitor::Monitor::get_monitors()?;
+    for monitor in &monitors {
+        unsafe {
+            DATA.push(AtomicU32::new(monitor.get_brightness()));
+        }
+    }
+
     if let Some(monitor) = monitors.first() {
         let brightness = monitor.get_brightness();
         notification_icon.modify_tooltip(brightness)?;
@@ -252,71 +245,48 @@ fn main() -> Result<()> {
         slider.SetValue2(brightness as f64)?;
     }
 
-    let (sender, receiver) = channel::<ChannelData>();
-    let window_proc_sender = sender.clone();
-
-    set_window_proc_data(window, &window_proc_sender);
-
-    let thread_handle = thread::spawn(move || {
+    let join_handle = thread::spawn(move || {
         let mut monitors = monitors;
-        let mut last_brightness: Vec<u32> = monitors.iter().map(|m| m.get_brightness()).collect();
 
-        let mut msg = receiver.recv().unwrap_or(ChannelData::Quit);
-        loop {
-            match msg {
-                ChannelData::Set(index, brightness) => {
-                    if let Some(val) = last_brightness.get_mut(index) {
-                        *val = brightness;
-                    }
-                    // consume channel data until TryRecvError::Empty, then set the brightness
-                    match receiver.try_recv() {
-                        Ok(try_msg) => {
-                            msg = try_msg;
-                            continue;
+        while !QUIT.load(Ordering::Relaxed) {
+            UNPARKED.store(false, Ordering::Relaxed);
+            thread::park();
+            if UNPARKED.load(Ordering::Acquire) {
+                let expo_backoff = [10, 20, 40, 80, 160];
+                for (monitor, atomic_val) in monitors.iter_mut().zip(unsafe { DATA.iter() }) {
+                    let brightness = atomic_val.load(Ordering::Relaxed);
+                    for duration in expo_backoff {
+                        if monitor.set_brightness(brightness).is_ok() {
+                            break;
                         }
-                        Err(TryRecvError::Empty) => {
-                            let expo_backoff = [10, 20, 40, 80, 160];
-                            for (monitor, brightness) in
-                                monitors.iter_mut().zip(last_brightness.iter())
-                            {
-                                if monitor.get_brightness() != *brightness {
-                                    for duration in expo_backoff {
-                                        if monitor.set_brightness(*brightness).is_ok() {
-                                            break;
-                                        }
-                                        thread::sleep(Duration::from_millis(duration));
-                                    }
-                                }
-                            }
-                        }
-                        Err(TryRecvError::Disconnected) => break,
+                        thread::sleep(Duration::from_millis(duration));
                     }
                 }
-                ChannelData::Refresh => {
-                    for monitor in monitors.iter_mut() {
-                        let brightness = monitor.get_brightness();
-                        while monitor.set_brightness(brightness).is_err() {}
-                    }
-                }
-                ChannelData::Quit => break,
             }
-            msg = receiver.recv().unwrap_or(ChannelData::Quit);
         }
     });
 
+    let worker_thread = join_handle.thread().clone();
+    let worker_thread_clone = worker_thread.clone();
+
     let event_token = slider.ValueChanged(xaml::XamlControls::create_slider_callback(
         move |_caller, args| {
+            // Slider's ValueChanged callback is run on the main thread
             if let Some(args) = args {
                 let brightness = args.NewValue()? as u32;
-                sender
-                    .send(ChannelData::Set(0, brightness))
-                    .unwrap_or(( /*ignore err*/ ));
+                unsafe {
+                    DATA[0].store(brightness, Ordering::Relaxed);
+                }
+                UNPARKED.store(true, Ordering::Release);
+                worker_thread.unpark();
                 brightness_number.SetText(num_to_hstring(brightness))?;
                 notification_icon.modify_tooltip(brightness)?;
             }
             Ok(())
         },
     ))?;
+
+    set_window_proc_data(window, &worker_thread_clone);
 
     let mut msg = MSG::default();
     unsafe {
@@ -328,7 +298,9 @@ fn main() -> Result<()> {
         }
     }
 
-    thread_handle.join().unwrap();
+    QUIT.store(true, Ordering::Relaxed);
+    worker_thread_clone.unpark();
+    join_handle.join().unwrap();
     slider.RemoveValueChanged(event_token)?;
     Ok(())
 }
