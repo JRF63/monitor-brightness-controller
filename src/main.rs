@@ -30,9 +30,7 @@ const MAIN_WINDOW_CLASS: PSTR = PSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8
 const EMPTY_STRING: PSTR = PSTR(b"\0".as_ptr() as *mut u8);
 const WM_APP_NOTIFYCALLBACK: u32 = WM_APP + 1;
 
-static QUIT: AtomicBool = AtomicBool::new(false);
 static UNPARKED: AtomicBool = AtomicBool::new(false);
-static mut DATA: Vec<AtomicU32> = Vec::new();
 
 unsafe extern "system" fn window_procedure(
     hwnd: HWND,
@@ -231,18 +229,22 @@ fn main() -> Result<()> {
     let slider = xaml_controls.slider()?;
 
     let monitors = monitor::Monitor::get_monitors()?;
-    for monitor in &monitors {
-        unsafe {
-            DATA.push(AtomicU32::new(monitor.get_brightness()));
-        }
-    }
-
+    
     if let Some(monitor) = monitors.first() {
         let brightness = monitor.get_brightness();
         notification_icon.modify_tooltip(brightness)?;
         monitor_name.SetText(HSTRING::from(monitor.get_name()))?;
         brightness_number.SetText(num_to_hstring(brightness))?;
         slider.SetValue2(brightness as f64)?;
+    }
+
+    static QUIT: AtomicBool = AtomicBool::new(false);
+    static mut DATA: Vec<AtomicU32> = Vec::new();
+
+    for monitor in &monitors {
+        unsafe {
+            DATA.push(AtomicU32::new(monitor.get_brightness()));
+        }
     }
 
     let join_handle = thread::spawn(move || {
@@ -254,12 +256,18 @@ fn main() -> Result<()> {
             if UNPARKED.load(Ordering::Acquire) {
                 let expo_backoff = [10, 20, 40, 80, 160];
                 for (monitor, atomic_val) in monitors.iter_mut().zip(unsafe { DATA.iter() }) {
-                    let brightness = atomic_val.load(Ordering::Relaxed);
-                    for duration in expo_backoff {
-                        if monitor.set_brightness(brightness).is_ok() {
+                    let mut brightness = atomic_val.load(Ordering::Acquire);
+                    loop {
+                        for duration in expo_backoff {
+                            if monitor.set_brightness(brightness).is_ok() {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(duration));
+                        }
+                        brightness = atomic_val.load(Ordering::Acquire);
+                        if brightness == monitor.get_brightness() {
                             break;
                         }
-                        thread::sleep(Duration::from_millis(duration));
                     }
                 }
             }
@@ -273,9 +281,10 @@ fn main() -> Result<()> {
         move |_caller, args| {
             // Slider's ValueChanged callback is run on the main thread
             if let Some(args) = args {
+                const MONITOR_INDEX: usize = 0;
                 let brightness = args.NewValue()? as u32;
                 unsafe {
-                    DATA[0].store(brightness, Ordering::Relaxed);
+                    DATA[MONITOR_INDEX].store(brightness, Ordering::Release);
                 }
                 UNPARKED.store(true, Ordering::Release);
                 worker_thread.unpark();
