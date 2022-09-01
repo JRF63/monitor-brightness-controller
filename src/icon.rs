@@ -1,4 +1,4 @@
-use windows::core::Result;
+use windows::core::{Result, PCSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::UI::Shell::*;
@@ -6,7 +6,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use std::io::Write;
 
-const ICON_RESOURCE: PSTR = PSTR(201 as *mut u8);
+const ICON_RESOURCE: PCSTR = PCSTR(201 as *mut u8);
 
 pub struct NotificationIcon(NOTIFYICONDATAA);
 
@@ -24,14 +24,14 @@ impl Drop for NotificationIcon {
 pub fn create_notification_icon(window: HWND) -> Result<NotificationIcon> {
     let icon = unsafe {
         LoadImageA(
-            GetModuleHandleA(PSTR::default()),
+            GetModuleHandleA(PCSTR::default())?,
             ICON_RESOURCE,
             IMAGE_ICON,
             0,
             0,
             LR_DEFAULTSIZE,
         )
-    };
+    }?;
     let icon = HICON(icon.0);
     if icon.0 == 0 {
         return Err(windows::core::Error::from_win32());

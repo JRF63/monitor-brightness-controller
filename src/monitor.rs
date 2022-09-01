@@ -1,15 +1,18 @@
-use windows::core::Result;
-use windows::Win32::Devices::Display::{
-    DestroyPhysicalMonitor, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
-    GetPhysicalMonitorsFromHMONITOR, SetMonitorBrightness, PHYSICAL_MONITOR,
+use windows::{
+    core::{Result, PCSTR},
+    Win32::{
+        Devices::Display::{
+            DestroyPhysicalMonitor, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
+            GetPhysicalMonitorsFromHMONITOR, SetMonitorBrightness, PHYSICAL_MONITOR,
+        },
+        Foundation::{BOOL, LPARAM, RECT},
+        Graphics::Gdi::{
+            EnumDisplayDevicesA, EnumDisplayMonitors, GetMonitorInfoA, DISPLAY_DEVICEA, HDC,
+            HMONITOR, MONITORINFO, MONITORINFOEXA,
+        },
+    },
 };
-use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Gdi::{
-    DISPLAY_DEVICEA, EnumDisplayMonitors, GetMonitorInfoA, HDC, HMONITOR, MONITORINFO, MONITORINFOEXA, EnumDisplayDevicesA
-};
-
-use std::mem::MaybeUninit;
-use std::ffi::CStr;
+use std::{ffi::CStr, mem::MaybeUninit};
 
 pub struct Monitor {
     physical_monitor: PHYSICAL_MONITOR,
@@ -138,11 +141,7 @@ fn get_physical_monitors(monitor_handle: HMONITOR) -> Result<Vec<PHYSICAL_MONITO
         physical_monitors.reserve(num_physical_monitors as usize);
         physical_monitors.set_len(num_physical_monitors as usize);
 
-        let result = GetPhysicalMonitorsFromHMONITOR(
-            monitor_handle,
-            num_physical_monitors,
-            physical_monitors.as_mut_ptr(),
-        );
+        let result = GetPhysicalMonitorsFromHMONITOR(monitor_handle, &mut physical_monitors);
         if result != 0 {
             Ok(physical_monitors)
         } else {
@@ -153,7 +152,7 @@ fn get_physical_monitors(monitor_handle: HMONITOR) -> Result<Vec<PHYSICAL_MONITO
 
 fn get_monitor_name(monitor_handle: HMONITOR) -> String {
     let mut info = MONITORINFOEXA {
-        __AnonymousBase_winuser_L13567_C43: MONITORINFO {
+        monitorInfo: MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFOEXA>() as u32,
             ..Default::default()
         },
@@ -165,15 +164,8 @@ fn get_monitor_name(monitor_handle: HMONITOR) -> String {
     };
     unsafe {
         GetMonitorInfoA(monitor_handle, &mut info as *mut MONITORINFOEXA as _);
-        EnumDisplayDevicesA(
-            PSTR(info.szDevice.as_ptr() as _),
-            0,
-            &mut device,
-            0
-        );
-        let slice = CStr::from_ptr(
-            device.DeviceString.as_ptr() as _
-        );
+        EnumDisplayDevicesA(PCSTR(info.szDevice.as_ptr() as _), 0, &mut device, 0);
+        let slice = CStr::from_ptr(device.DeviceString.as_ptr() as _);
         slice.to_str().unwrap().to_string()
     }
 }

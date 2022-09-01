@@ -1,17 +1,20 @@
-use windows::core::{Interface, Result};
-use windows::Graphics::Imaging::SoftwareBitmap;
-use windows::Storage::Streams::Buffer;
-use windows::Win32::System::WinRT::IBufferByteAccess;
-use windows::UI::Xaml::Controls::Image;
-use windows::UI::Xaml::Media::Imaging::SoftwareBitmapSource;
-use windows::UI::Xaml::Media::Stretch;
+use windows::{
+    core::{Interface, Result},
+    Graphics::Imaging::SoftwareBitmap,
+    Storage::Streams::Buffer,
+    Win32::System::WinRT::IBufferByteAccess,
+    UI::Xaml::{
+        Controls::Image,
+        Media::{Imaging::SoftwareBitmapSource, Stretch},
+    },
+};
 
 pub fn create_image() -> Result<Image> {
     const IMAGE_WIDTH: i32 = 24;
     const IMAGE_HEIGHT: i32 = 24;
 
     let buffer = Buffer::Create(ICON.len() as u32)?;
-    let writeable: IBufferByteAccess = buffer.0.cast()?;
+    let writeable: IBufferByteAccess = buffer.cast()?;
     unsafe {
         let ptr = writeable.Buffer()?;
         let slice = &mut *(ptr as *mut [u8; ICON.len()]);
@@ -26,7 +29,7 @@ pub fn create_image() -> Result<Image> {
         IMAGE_HEIGHT,
         windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied,
     )?;
-    
+
     let image_source = SoftwareBitmapSource::new()?;
     let _ignored_async = image_source.SetBitmapAsync(bitmap)?;
 

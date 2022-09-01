@@ -1,7 +1,7 @@
 #![windows_subsystem = "windows"]
 
 use windows::{
-    core::{Result, GUID, HSTRING},
+    core::{Result, GUID, HSTRING, PCSTR},
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
@@ -10,8 +10,9 @@ use windows::{
             Power::POWERBROADCAST_SETTING,
             WinRT::{RoInitialize, RO_INIT_SINGLETHREADED},
         },
-        UI::{Controls::RichEdit::WM_CONTEXTMENU, Shell::*, WindowsAndMessaging::*},
+        UI::{Shell::*, WindowsAndMessaging::*},
     },
+    UI::Xaml::Controls::Primitives::RangeBase,
 };
 
 use std::{
@@ -32,8 +33,8 @@ const ICON_GUID: GUID = GUID::from_u128(0xe8bd1019_8a41_421d_bb5c_7b4ade6bbd9b);
 #[cfg(not(debug_assertions))]
 const ICON_GUID: GUID = GUID::from_u128(0x58eac4e5_34c3_49bb_90b6_fd86751edbad);
 
-const MAIN_WINDOW_CLASS: PSTR = PSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8);
-const EMPTY_STRING: PSTR = PSTR(b"\0".as_ptr() as *mut u8);
+const MAIN_WINDOW_CLASS: PCSTR = PCSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8);
+const EMPTY_STRING: PCSTR = PCSTR(b"\0".as_ptr() as *mut u8);
 const WM_APP_NOTIFYCALLBACK: u32 = WM_APP + 1;
 
 enum BrightnessEvent {
@@ -145,8 +146,8 @@ fn window_position(width: i32, height: i32) -> (i32, i32) {
 }
 
 fn create_window(x: i32, y: i32, width: i32, height: i32) -> Result<HWND> {
-    let instance = unsafe { GetModuleHandleA(PSTR::default()) };
-    let cursor = unsafe { LoadCursorW(None, IDC_ARROW) };
+    let instance = unsafe { GetModuleHandleA(PCSTR::default())? };
+    let cursor = unsafe { LoadCursorW(None, IDC_ARROW)? };
     let wcex = WNDCLASSEXA {
         cbSize: std::mem::size_of::<WNDCLASSEXA>() as u32,
         style: CS_DROPSHADOW,
@@ -247,7 +248,7 @@ fn main() -> Result<()> {
         notification_icon.modify_tooltip(brightness)?;
         monitor_name.SetText(HSTRING::from(monitor.get_name()))?;
         brightness_number.SetText(num_to_hstring(brightness))?;
-        slider.SetValue2(brightness as f64)?;
+        RangeBase::from(&slider).SetValue(brightness as f64)?;
     }
 
     let (tx, rx) = mpsc::channel();
@@ -303,8 +304,8 @@ fn main() -> Result<()> {
         }
     });
 
-    let event_token = slider.ValueChanged(xaml::XamlControls::create_slider_callback(
-        move |_caller, args| {
+    let event_token = RangeBase::from(&slider).ValueChanged(
+        xaml::XamlControls::create_slider_callback(move |_caller, args| {
             // Slider's ValueChanged callback is run on the main thread
             if let Some(args) = args {
                 const MONITOR_INDEX: usize = 0;
@@ -315,8 +316,8 @@ fn main() -> Result<()> {
                 notification_icon.modify_tooltip(brightness)?;
             }
             Ok(())
-        },
-    ))?;
+        }),
+    )?;
 
     set_window_proc_data(window, &tx2);
 
@@ -331,6 +332,6 @@ fn main() -> Result<()> {
     }
 
     std::mem::drop(tx2);
-    slider.RemoveValueChanged(event_token)?;
+    RangeBase::from(&slider).RemoveValueChanged(event_token)?;
     Ok(())
 }
