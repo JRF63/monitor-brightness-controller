@@ -1,19 +1,25 @@
 #![windows_subsystem = "windows"]
 
-use windows::core::{Result, GUID, HSTRING};
-use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::LibraryLoader::GetModuleHandleA;
-use windows::Win32::System::Power::POWERBROADCAST_SETTING;
-use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_SINGLETHREADED};
-use windows::Win32::UI::Controls::RichEdit::WM_CONTEXTMENU;
-use windows::Win32::UI::Shell::*;
-use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::{
+    core::{Result, GUID, HSTRING},
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::{
+            LibraryLoader::GetModuleHandleA,
+            Power::POWERBROADCAST_SETTING,
+            WinRT::{RoInitialize, RO_INIT_SINGLETHREADED},
+        },
+        UI::{Controls::RichEdit::WM_CONTEXTMENU, Shell::*, WindowsAndMessaging::*},
+    },
+};
 
-use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::thread::{self, Thread};
-use std::time::Duration;
+use std::{
+    io::Write,
+    sync::mpsc::{self, Sender, TryRecvError},
+    thread,
+    time::Duration,
+};
 
 mod icon;
 mod monitor;
@@ -30,7 +36,10 @@ const MAIN_WINDOW_CLASS: PSTR = PSTR(b"SoftwareBrightness\0".as_ptr() as *mut u8
 const EMPTY_STRING: PSTR = PSTR(b"\0".as_ptr() as *mut u8);
 const WM_APP_NOTIFYCALLBACK: u32 = WM_APP + 1;
 
-static UNPARKED: AtomicBool = AtomicBool::new(false);
+enum BrightnessEvent {
+    Change(usize, u32),
+    Reset,
+}
 
 unsafe extern "system" fn window_procedure(
     hwnd: HWND,
@@ -62,9 +71,8 @@ unsafe extern "system" fn window_procedure(
                 }
                 TIMER_BRIGHTNESS_RESET => {
                     KillTimer(hwnd, TIMER_BRIGHTNESS_RESET);
-                    let thread = get_window_proc_data(&hwnd);
-                    UNPARKED.store(true, Ordering::Relaxed);
-                    thread.unpark();
+                    let tx = get_window_proc_data(&hwnd);
+                    let _ = tx.send(BrightnessEvent::Reset);
                 }
                 _ => (),
             }
@@ -185,15 +193,19 @@ fn num_to_hstring(num: u32) -> HSTRING {
     HSTRING::from(s)
 }
 
-fn set_window_proc_data(hwnd: HWND, data: &Thread) {
+fn set_window_proc_data(hwnd: HWND, data: &Sender<BrightnessEvent>) {
     unsafe {
-        SetWindowLongPtrA(hwnd, GWLP_USERDATA, data as *const Thread as isize);
+        SetWindowLongPtrA(
+            hwnd,
+            GWLP_USERDATA,
+            data as *const Sender<BrightnessEvent> as isize,
+        );
     }
 }
 
-fn get_window_proc_data<'a>(hwnd: &'a HWND) -> &'a Thread {
+fn get_window_proc_data<'a>(hwnd: &'a HWND) -> &'a Sender<BrightnessEvent> {
     unsafe {
-        let ptr = GetWindowLongPtrA(*hwnd, GWLP_USERDATA) as *const Thread;
+        let ptr = GetWindowLongPtrA(*hwnd, GWLP_USERDATA) as *const Sender<BrightnessEvent>;
         &*ptr
     }
 }
@@ -229,7 +241,7 @@ fn main() -> Result<()> {
     let slider = xaml_controls.slider()?;
 
     let monitors = monitor::Monitor::get_monitors()?;
-    
+
     if let Some(monitor) = monitors.first() {
         let brightness = monitor.get_brightness();
         notification_icon.modify_tooltip(brightness)?;
@@ -238,44 +250,58 @@ fn main() -> Result<()> {
         slider.SetValue2(brightness as f64)?;
     }
 
-    static QUIT: AtomicBool = AtomicBool::new(false);
-    static mut DATA: Vec<AtomicU32> = Vec::new();
+    let (tx, rx) = mpsc::channel();
+    let tx1 = tx.clone();
+    let tx2 = tx;
 
-    for monitor in &monitors {
-        unsafe {
-            DATA.push(AtomicU32::new(monitor.get_brightness()));
-        }
-    }
-
-    let join_handle = thread::spawn(move || {
+    thread::spawn(move || {
         let mut monitors = monitors;
+        let mut brightness_vals = monitors
+            .iter()
+            .map(|m| m.get_brightness())
+            .collect::<Vec<_>>();
 
-        while !QUIT.load(Ordering::Relaxed) {
-            UNPARKED.store(false, Ordering::Relaxed);
-            thread::park();
-            if UNPARKED.load(Ordering::Acquire) {
-                let expo_backoff = [10, 20, 40, 80, 160];
-                for (monitor, atomic_val) in monitors.iter_mut().zip(unsafe { DATA.iter() }) {
-                    let mut brightness = atomic_val.load(Ordering::Acquire);
-                    loop {
-                        for duration in expo_backoff {
-                            if monitor.set_brightness(brightness).is_ok() {
-                                break;
-                            }
-                            thread::sleep(Duration::from_millis(duration));
-                        }
-                        brightness = atomic_val.load(Ordering::Acquire);
-                        if brightness == monitor.get_brightness() {
-                            break;
+        let expo_backoff = [
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+            Duration::from_millis(40),
+            Duration::from_millis(80),
+            Duration::from_millis(160),
+        ];
+
+        'outer: loop {
+            let mut msg = match rx.recv() {
+                Ok(msg) => msg,
+                Err(_) => break,
+            };
+
+            // Once a message is received, repeatedly `try_recv` until there is no more.
+            // This is done so that it will not try to set the brightness one by one for each
+            // value sent by the callback.
+            loop {
+                match msg {
+                    BrightnessEvent::Change(i, brightness) => {
+                        brightness_vals[i] = brightness;
+                        msg = match rx.try_recv() {
+                            Ok(msg) => msg,
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => break 'outer,
                         }
                     }
+                    BrightnessEvent::Reset => break,
+                }
+            }
+
+            for (monitor, brightness) in monitors.iter_mut().zip(brightness_vals.iter()) {
+                for duration in expo_backoff {
+                    if monitor.set_brightness(*brightness).is_ok() {
+                        break;
+                    }
+                    thread::sleep(duration);
                 }
             }
         }
     });
-
-    let worker_thread = join_handle.thread().clone();
-    let worker_thread_clone = worker_thread.clone();
 
     let event_token = slider.ValueChanged(xaml::XamlControls::create_slider_callback(
         move |_caller, args| {
@@ -283,11 +309,8 @@ fn main() -> Result<()> {
             if let Some(args) = args {
                 const MONITOR_INDEX: usize = 0;
                 let brightness = args.NewValue()? as u32;
-                unsafe {
-                    DATA[MONITOR_INDEX].store(brightness, Ordering::Release);
-                }
-                UNPARKED.store(true, Ordering::Release);
-                worker_thread.unpark();
+                let _ = tx1.send(BrightnessEvent::Change(MONITOR_INDEX, brightness));
+
                 brightness_number.SetText(num_to_hstring(brightness))?;
                 notification_icon.modify_tooltip(brightness)?;
             }
@@ -295,7 +318,7 @@ fn main() -> Result<()> {
         },
     ))?;
 
-    set_window_proc_data(window, &worker_thread_clone);
+    set_window_proc_data(window, &tx2);
 
     let mut msg = MSG::default();
     unsafe {
@@ -307,9 +330,7 @@ fn main() -> Result<()> {
         }
     }
 
-    QUIT.store(true, Ordering::Relaxed);
-    worker_thread_clone.unpark();
-    join_handle.join().unwrap();
+    std::mem::drop(tx2);
     slider.RemoveValueChanged(event_token)?;
     Ok(())
 }
