@@ -14,9 +14,9 @@ use windows::{
                 CreateWindowExA, DefWindowProcA, GetWindowLongPtrA, KillTimer, LoadCursorW,
                 PostQuitMessage, RegisterClassExA, SendMessageA, SetForegroundWindow, SetTimer,
                 SetWindowLongPtrA, ShowWindow, CS_DROPSHADOW, GWLP_USERDATA, IDC_ARROW,
-                PBT_POWERSETTINGCHANGE, SW_HIDE, SW_SHOW, WM_ACTIVATEAPP, WM_CLOSE, WM_CONTEXTMENU,
+                PBT_POWERSETTINGCHANGE, SW_HIDE, WM_ACTIVATEAPP, WM_CLOSE, WM_CONTEXTMENU,
                 WM_DESTROY, WM_POWERBROADCAST, WM_TIMER, WNDCLASSEXA, WS_EX_NOREDIRECTIONBITMAP,
-                WS_EX_TOOLWINDOW, WS_POPUP,
+                WS_EX_TOOLWINDOW, WS_POPUP, SWP_SHOWWINDOW, SetWindowPos
             },
         },
     },
@@ -51,9 +51,14 @@ pub struct Window<'a> {
 }
 
 impl<'a> Window<'a> {
+    pub const WIDTH: i32 = 360;
+    pub const HEIGHT: i32 = 100;
+
     /// Create a native window that acts as a container for XAML.
-    pub fn new(width: i32, height: i32, sender: &'a Sender<BrightnessEvent>) -> Result<Self> {
-        /// Should only be used inside `Window::new`.
+    pub fn new(sender: &'a Sender<BrightnessEvent>) -> Result<Self> {
+        /// Handles the window events. A function inside a function does not allow the inner
+        /// function to access the outer functions variables; this is only placed here to emphasize
+        /// that this should only be used inside `Window::new`.
         unsafe extern "system" fn window_procedure(
             hwnd: HWND,
             umsg: u32,
@@ -103,7 +108,10 @@ impl<'a> Window<'a> {
                         // left clicked
                         NIN_SELECT => {
                             if !LOST_FOCUS {
-                                ShowWindow(hwnd, SW_SHOW);
+                                // Recalculate the position in case the taskbar position was
+                                // changed
+                                let (x, y) = window_position(Window::WIDTH, Window::HEIGHT);
+                                SetWindowPos(hwnd, HWND(0), x, y, Window::WIDTH, Window::HEIGHT, SWP_SHOWWINDOW);
                                 SetForegroundWindow(hwnd);
                             }
                         }
@@ -165,7 +173,7 @@ impl<'a> Window<'a> {
             }
         }
 
-        let (x, y) = window_position(width, height);
+        let (x, y) = window_position(Self::WIDTH, Self::HEIGHT);
 
         let hwnd = unsafe {
             CreateWindowExA(
@@ -175,8 +183,8 @@ impl<'a> Window<'a> {
                 WS_POPUP,
                 x,
                 y,
-                width,
-                height,
+                Self::WIDTH,
+                Self::HEIGHT,
                 None,
                 None,
                 instance,

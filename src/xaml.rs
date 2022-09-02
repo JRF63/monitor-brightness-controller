@@ -44,7 +44,7 @@ impl<'a> Drop for XamlControls<'a> {
 }
 
 impl<'a> XamlControls<'a> {
-    pub fn new(parent: &'a Window, width: i32, height: i32) -> Result<Self> {
+    pub fn new(parent: &'a Window) -> Result<Self> {
         let manager = WindowsXamlManager::InitializeForCurrentThread()?;
         let xaml_source = DesktopWindowXamlSource::new()?;
         let interop: IDesktopWindowXamlSourceNative = xaml_source.cast()?;
@@ -59,7 +59,7 @@ impl<'a> XamlControls<'a> {
 
         // Sets the XAML window's position on its parent
         unsafe {
-            SetWindowPos(window, HWND(0), 0, 0, width, height, SWP_SHOWWINDOW);
+            SetWindowPos(window, HWND(0), 0, 0, Window::WIDTH, Window::HEIGHT, SWP_SHOWWINDOW);
             UpdateWindow(parent.as_handle());
         }
 
