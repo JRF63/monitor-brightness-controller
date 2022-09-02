@@ -20,10 +20,13 @@ impl Drop for PowerNotifyHandle {
     }
 }
 
-pub fn register_for_power_notification(hwnd: HWND) -> Result<PowerNotifyHandle> {
-    unsafe {
-        let handle =
-            RegisterPowerSettingNotification(HANDLE(hwnd.0), &GUID_CONSOLE_DISPLAY_STATE, 0)?;
-        Ok(PowerNotifyHandle(handle))
+impl PowerNotifyHandle {
+    /// Registers the given window for power event notifications.
+    pub fn new(hwnd: HWND) -> Result<PowerNotifyHandle> {
+        unsafe {
+            let handle =
+                RegisterPowerSettingNotification(HANDLE(hwnd.0), &GUID_CONSOLE_DISPLAY_STATE, 0)?;
+            Ok(PowerNotifyHandle(handle))
+        }
     }
 }

@@ -1,9 +1,14 @@
+mod image;
+
+use std::marker::PhantomData;
+
 use windows::{
     core::{IInspectable, Interface, Result},
     Win32::{
         Foundation::{BOOL, HWND},
+        Graphics::Gdi::UpdateWindow,
         System::WinRT::Xaml::{IDesktopWindowXamlSourceNative, IDesktopWindowXamlSourceNative2},
-        UI::WindowsAndMessaging::MSG,
+        UI::WindowsAndMessaging::{SetWindowPos, MSG, SWP_SHOWWINDOW},
     },
     UI::Xaml::{
         Controls::{
@@ -20,16 +25,16 @@ use windows::{
     },
 };
 
-mod image;
+use crate::Window;
 
-pub struct XamlControls {
+pub struct XamlControls<'a> {
     manager: WindowsXamlManager,
     source: IDesktopWindowXamlSourceNative2,
-    window: HWND,
     controls: StackPanel,
+    parent: PhantomData<&'a HWND>,
 }
 
-impl Drop for XamlControls {
+impl<'a> Drop for XamlControls<'a> {
     fn drop(&mut self) {
         if let Ok(source) = self.source.cast::<DesktopWindowXamlSource>() {
             source.Close().unwrap();
@@ -38,13 +43,13 @@ impl Drop for XamlControls {
     }
 }
 
-impl XamlControls {
-    pub fn new(parent: HWND) -> Result<Self> {
+impl<'a> XamlControls<'a> {
+    pub fn new(parent: &'a Window, width: i32, height: i32) -> Result<Self> {
         let manager = WindowsXamlManager::InitializeForCurrentThread()?;
         let xaml_source = DesktopWindowXamlSource::new()?;
         let interop: IDesktopWindowXamlSourceNative = xaml_source.cast()?;
         let window = unsafe {
-            interop.AttachToWindow(parent)?;
+            interop.AttachToWindow(parent.as_handle())?;
             interop.WindowHandle()?
         };
 
@@ -52,16 +57,18 @@ impl XamlControls {
         xaml_source.SetContent(&controls)?;
         let source: IDesktopWindowXamlSourceNative2 = xaml_source.cast()?;
 
+        // Sets the XAML window's position on its parent
+        unsafe {
+            SetWindowPos(window, HWND(0), 0, 0, width, height, SWP_SHOWWINDOW);
+            UpdateWindow(parent.as_handle());
+        }
+
         Ok(XamlControls {
             manager,
             source,
-            window,
             controls,
+            parent: PhantomData,
         })
-    }
-
-    pub fn window(&self) -> HWND {
-        self.window
     }
 
     pub fn slider(&self) -> Result<Slider> {
@@ -116,7 +123,7 @@ impl XamlControls {
     }
 
     pub fn create_slider_callback<
-        'a,
+        'b,
         F: FnMut(
                 &Option<IInspectable>,
                 &Option<RangeBaseValueChangedEventArgs>,

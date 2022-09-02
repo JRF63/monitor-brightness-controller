@@ -1,3 +1,4 @@
+use std::{ffi::CStr, mem::MaybeUninit};
 use windows::{
     core::{Result, PCSTR},
     Win32::{
@@ -12,7 +13,6 @@ use windows::{
         },
     },
 };
-use std::{ffi::CStr, mem::MaybeUninit};
 
 pub struct Monitor {
     physical_monitor: PHYSICAL_MONITOR,
@@ -38,8 +38,9 @@ impl Monitor {
                 brightness.clamp(self.min_brightness, self.max_brightness),
             );
             if result != 0 {
+                // TODO: Maybe store brightness in Windows registry to allow setting persistence
+                // between runs?
                 self.current_brightness = brightness;
-                // TODO: save to registry?
                 Ok(())
             } else {
                 Err(windows::core::Error::from_win32())
@@ -170,31 +171,36 @@ fn get_monitor_name(monitor_handle: HMONITOR) -> String {
     }
 }
 
-#[test]
-fn test_brightness() {
-    use std::{thread, time};
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let duration = time::Duration::from_secs(5);
+    #[test]
+    fn set_brightness() {
+        use std::{thread, time};
 
-    let mut monitors = Monitor::get_monitors().unwrap();
-    let mut brightnesses = Vec::new();
-    for monitor in &mut monitors {
-        brightnesses.push(monitor.get_brightness());
-    }
+        let duration = time::Duration::from_secs(5);
 
-    for monitor in &mut monitors {
-        monitor.set_brightness(0).unwrap();
-    }
+        let mut monitors = Monitor::get_monitors().unwrap();
+        let mut brightnesses = Vec::new();
+        for monitor in &mut monitors {
+            brightnesses.push(monitor.get_brightness());
+        }
 
-    thread::sleep(duration);
+        for monitor in &mut monitors {
+            monitor.set_brightness(0).unwrap();
+        }
 
-    for monitor in &mut monitors {
-        monitor.set_brightness(100).unwrap();
-    }
+        thread::sleep(duration);
 
-    thread::sleep(duration);
+        for monitor in &mut monitors {
+            monitor.set_brightness(100).unwrap();
+        }
 
-    for (monitor, &brightness) in monitors.iter_mut().zip(brightnesses.iter()) {
-        monitor.set_brightness(brightness).unwrap();
+        thread::sleep(duration);
+
+        for (monitor, &brightness) in monitors.iter_mut().zip(brightnesses.iter()) {
+            monitor.set_brightness(brightness).unwrap();
+        }
     }
 }
