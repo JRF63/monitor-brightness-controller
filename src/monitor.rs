@@ -1,16 +1,13 @@
-use std::{ffi::CStr, mem::MaybeUninit};
+use std::mem::MaybeUninit;
 use windows::{
-    core::{Result, PCSTR},
+    core::Result,
     Win32::{
         Devices::Display::{
             DestroyPhysicalMonitor, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
             GetPhysicalMonitorsFromHMONITOR, SetMonitorBrightness, PHYSICAL_MONITOR,
         },
         Foundation::{BOOL, LPARAM, RECT},
-        Graphics::Gdi::{
-            EnumDisplayDevicesA, EnumDisplayMonitors, GetMonitorInfoA, DISPLAY_DEVICEA, HDC,
-            HMONITOR, MONITORINFO, MONITORINFOEXA,
-        },
+        Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR},
     },
 };
 
@@ -60,11 +57,17 @@ impl Monitor {
         let mut monitors = Vec::new();
         let monitor_handles = get_monitor_handles()?;
         for &monitor_handle in &monitor_handles {
-            let device_name = get_monitor_name(monitor_handle);
             for physical_monitor in get_physical_monitors(monitor_handle)? {
                 let mut min_brightness: MaybeUninit<u32> = MaybeUninit::uninit();
                 let mut current_brightness: MaybeUninit<u32> = MaybeUninit::uninit();
                 let mut max_brightness: MaybeUninit<u32> = MaybeUninit::uninit();
+
+                let device_name = {
+                    // Copy the `[u16; 128]` to a stack variable to avoid dealing with a reference to
+                    // a packed struct member and be forced to use unaligned pointer reads
+                    let desc = physical_monitor.szPhysicalMonitorDescription;
+                    string_from_raw_utf16(&desc)
+                };
 
                 unsafe {
                     let result = GetMonitorBrightness(
@@ -92,6 +95,7 @@ impl Monitor {
     }
 }
 
+/// Get handles to all connected monitors. The returned handles does not need to be manually freed.
 fn get_monitor_handles() -> Result<Vec<HMONITOR>> {
     unsafe extern "system" fn callback(
         monitor_handle: HMONITOR,
@@ -120,6 +124,8 @@ fn get_monitor_handles() -> Result<Vec<HMONITOR>> {
     }
 }
 
+/// Return the number of physical monitors associated with a `HMONITOR` handle. A single `HMONITOR`
+/// can have multiple physical monitors when extending or duplicating displays.
 fn get_num_physical_monitors(monitor_handle: HMONITOR) -> Result<u32> {
     let mut num_physical_monitors: MaybeUninit<u32> = MaybeUninit::uninit();
     unsafe {
@@ -135,6 +141,7 @@ fn get_num_physical_monitors(monitor_handle: HMONITOR) -> Result<u32> {
     }
 }
 
+/// Return all physical monitors of `monitor_handle`.
 fn get_physical_monitors(monitor_handle: HMONITOR) -> Result<Vec<PHYSICAL_MONITOR>> {
     let num_physical_monitors = get_num_physical_monitors(monitor_handle)?;
     unsafe {
@@ -151,24 +158,17 @@ fn get_physical_monitors(monitor_handle: HMONITOR) -> Result<Vec<PHYSICAL_MONITO
     }
 }
 
-fn get_monitor_name(monitor_handle: HMONITOR) -> String {
-    let mut info = MONITORINFOEXA {
-        monitorInfo: MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFOEXA>() as u32,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let mut device = DISPLAY_DEVICEA {
-        cb: std::mem::size_of::<DISPLAY_DEVICEA>() as u32,
-        ..Default::default()
-    };
-    unsafe {
-        GetMonitorInfoA(monitor_handle, &mut info as *mut MONITORINFOEXA as _);
-        EnumDisplayDevicesA(PCSTR(info.szDevice.as_ptr() as _), 0, &mut device, 0);
-        let slice = CStr::from_ptr(device.DeviceString.as_ptr() as _);
-        slice.to_str().unwrap().to_string()
+/// Create a `String` from a null-terminated UTF-16 string where the location of the null is not
+/// known.
+fn string_from_raw_utf16(array: &[u16; 128]) -> String {
+    let mut zero_loc = 0;
+    for (i, &v) in array.iter().enumerate() {
+        zero_loc = i;
+        if v == 0 {
+            break;
+        }
     }
+    String::from_utf16_lossy(&array[..zero_loc])
 }
 
 #[cfg(test)]
