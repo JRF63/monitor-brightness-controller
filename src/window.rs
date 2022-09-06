@@ -11,16 +11,15 @@ use windows::{
                 APPBARDATA, NIN_SELECT,
             },
             WindowsAndMessaging::{
-                CreateWindowExA, DefWindowProcA, GetWindowLongPtrA, KillTimer, LoadCursorW,
-                PostQuitMessage, RegisterClassExA, SendMessageA, SetForegroundWindow, SetTimer,
-                SetWindowLongPtrA, SetWindowPos, ShowWindow, CS_DROPSHADOW, GWLP_USERDATA,
-                IDC_ARROW, PBT_POWERSETTINGCHANGE, SWP_SHOWWINDOW, SW_HIDE, WM_ACTIVATEAPP,
-                WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_POWERBROADCAST, WM_TIMER, WNDCLASSEXA,
-                WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
+                CreateWindowExA, DefWindowProcA, GetWindowLongPtrA, GetWindowRect, KillTimer,
+                LoadCursorW, PostQuitMessage, RegisterClassExA, SendMessageA, SetForegroundWindow,
+                SetTimer, SetWindowLongPtrA, SetWindowPos, ShowWindow, CS_DROPSHADOW,
+                GWLP_USERDATA, IDC_ARROW, PBT_POWERSETTINGCHANGE, SWP_SHOWWINDOW, SW_HIDE,
+                WM_ACTIVATEAPP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_POWERBROADCAST, WM_TIMER,
+                WNDCLASSEXA, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
-    UI::Xaml::Controls::ListBox,
 };
 
 use crate::{BrightnessEvent, NotificationIcon};
@@ -111,17 +110,24 @@ impl<'a> Window<'a> {
                             if !LOST_FOCUS {
                                 // Recalculate the position in case the taskbar position was
                                 // changed
-                                let (x, y) = window_position(Window::WIDTH, Window::HEIGHT);
-                                SetWindowPos(
-                                    hwnd,
-                                    HWND(0),
-                                    x,
-                                    y,
-                                    Window::WIDTH,
-                                    Window::HEIGHT,
-                                    SWP_SHOWWINDOW,
-                                );
-                                SetForegroundWindow(hwnd);
+                                let mut rect = std::mem::MaybeUninit::uninit();
+                                let res = GetWindowRect(hwnd, rect.as_mut_ptr());
+                                if res.as_bool() {
+                                    let rect = rect.assume_init();
+                                    let width = Window::WIDTH;
+                                    let height = rect.bottom - rect.top;
+                                    let (x, y) = window_position(width, height);
+                                    SetWindowPos(
+                                        hwnd,
+                                        HWND(0),
+                                        x,
+                                        y,
+                                        width,
+                                        height,
+                                        SWP_SHOWWINDOW,
+                                    );
+                                    SetForegroundWindow(hwnd);
+                                }
                             }
                         }
                         // right clicked
@@ -224,11 +230,6 @@ impl<'a> Window<'a> {
     pub fn as_handle(&self) -> HWND {
         self.inner
     }
-}
-
-struct WindowData {
-    sender: Sender<BrightnessEvent>,
-    list_box: ListBox
 }
 
 impl<'a> Deref for Window<'a> {

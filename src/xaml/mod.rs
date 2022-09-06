@@ -7,7 +7,10 @@ use windows::{
     Win32::{
         Foundation::{BOOL, HWND},
         System::WinRT::Xaml::{IDesktopWindowXamlSourceNative, IDesktopWindowXamlSourceNative2},
-        UI::WindowsAndMessaging::{SetWindowPos, MSG, SWP_SHOWWINDOW},
+        UI::WindowsAndMessaging::{
+            SetWindowPos, MSG, SWP_DEFERERASE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER,
+            SWP_SHOWWINDOW,
+        },
     },
     UI::{
         Text::FontWeights,
@@ -141,6 +144,16 @@ impl<'a> XamlControls<'a> {
 
         set_button_click_event(window, parent, &button, list_box.clone())?;
 
+        // Set the XAML size to its expanded size. Minimizes flickering when resizing the parent
+        // window
+        let items = ItemsControl::from(&list_box).Items()?;
+        let num_items = items.Size()? as i32;
+        let height =
+            XamlControls::CONTROLS_HEIGHT + XamlControls::SELECTOR_HEIGHT * (1 + num_items);
+        unsafe {
+            SetWindowPos(window, HWND(0), 0, 0, Window::WIDTH, height, SWP_SHOWWINDOW);
+        }
+
         Panel::from(&xaml_container).Children()?.Append(button)?;
         Panel::from(&xaml_container).Children()?.Append(list_box)?;
         Panel::from(&xaml_container)
@@ -270,37 +283,38 @@ fn set_button_click_event(
     ButtonBase::from(button)
         .Click(RoutedEventHandler::new(move |button, _args| {
             if UIElement::from(&list_box).Visibility()? == Visibility::Collapsed {
-                let items = ItemsControl::from(&list_box).Items()?;
-                let num_items = items.Size()? as i32;
-                // Increate native window height to accomodate the revealed `ListBox`
-                unsafe {
-                    let height = XamlControls::CONTROLS_HEIGHT
-                        + XamlControls::SELECTOR_HEIGHT * (1 + num_items);
-                    let (x, y) = window_position(Window::WIDTH, height);
-                    SetWindowPos(parent, HWND(0), x, y, Window::WIDTH, height, SWP_SHOWWINDOW);
-                    SetWindowPos(window, HWND(0), 0, 0, Window::WIDTH, height, SWP_SHOWWINDOW);
-                }
-                // Show the monitor selection
-                UIElement::from(&list_box).SetVisibility(Visibility::Visible)?;
-
-                // Sets the selector text to "Select Monitor"
                 if let Some(button) = button {
+                    let items = ItemsControl::from(&list_box).Items()?;
+                    let num_items = items.Size()? as i32;
+                    // Increate native window height to accomodate the revealed `ListBox`
+                    unsafe {
+                        let height = XamlControls::CONTROLS_HEIGHT
+                            + XamlControls::SELECTOR_HEIGHT * (1 + num_items);
+                        let (x, y) = window_position(Window::WIDTH, height);
+                        SetWindowPos(window, HWND(0), 0, 0, Window::WIDTH, height, SWP_SHOWWINDOW);
+                        SetWindowPos(
+                            parent,
+                            HWND(0),
+                            x,
+                            y,
+                            Window::WIDTH,
+                            height,
+                            SWP_NOZORDER | SWP_NOSENDCHANGING | SWP_NOREDRAW | SWP_DEFERERASE,
+                        );
+                    }
+                    // Show the monitor selection
+                    UIElement::from(&list_box).SetVisibility(Visibility::Visible)?;
+
+                    // Sets the selector text to "Select Monitor"
                     let button: Button = button.cast()?;
                     let text_block: TextBlock = ContentControl::from(&button).Content()?.cast()?;
                     text_block.SetText(HSTRING::from("Select monitor"))?;
                     text_block.SetFontWeight(FontWeights::Bold()?)?;
                 }
             } else {
-                hide_selection(window, parent, &list_box);
-
-                // Update the selector text to the currently selected monitor's name
                 if let Some(button) = button {
                     let button: Button = button.cast()?;
-                    let text_block: TextBlock = ContentControl::from(&button).Content()?.cast()?;
-                    let selected_item = Selector::from(&list_box).SelectedItem()?;
-                    let monitor_name: TextBlock = selected_item.cast()?;
-                    text_block.SetText(monitor_name.Text()?)?;
-                    text_block.SetFontWeight(FontWeights::Normal()?)?;
+                    hide_selection(&button, parent, &list_box)?;
                 }
             }
             Ok(())
@@ -309,7 +323,7 @@ fn set_button_click_event(
 }
 
 /// Hides the selection of monitors.
-pub fn hide_selection(window: HWND, parent: HWND, list_box: &ListBox) {
+pub fn hide_selection(button: &Button, parent: HWND, list_box: &ListBox) -> Result<()> {
     // Return the native window to its default size
     unsafe {
         let (x, y) = window_position(Window::WIDTH, Window::HEIGHT);
@@ -320,20 +334,20 @@ pub fn hide_selection(window: HWND, parent: HWND, list_box: &ListBox) {
             y,
             Window::WIDTH,
             Window::HEIGHT,
-            SWP_SHOWWINDOW,
-        );
-        SetWindowPos(
-            window,
-            HWND(0),
-            0,
-            0,
-            Window::WIDTH,
-            Window::HEIGHT,
-            SWP_SHOWWINDOW,
+            SWP_NOZORDER | SWP_NOSENDCHANGING | SWP_NOREDRAW | SWP_DEFERERASE,
         );
     }
     // Re-hide the selection
     let _ = UIElement::from(list_box).SetVisibility(Visibility::Collapsed);
+
+    // Update the selector text to the currently selected monitor's name
+    let text_block: TextBlock = ContentControl::from(button).Content()?.cast()?;
+    let selected_item = Selector::from(list_box).SelectedItem()?;
+    let monitor_name: TextBlock = selected_item.cast()?;
+    text_block.SetText(monitor_name.Text()?)?;
+    text_block.SetFontWeight(FontWeights::Normal()?)?;
+
+    Ok(())
 }
 
 /// Helper function for creating a `HSTRING` from an integer.
