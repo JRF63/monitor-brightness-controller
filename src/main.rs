@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+// #![windows_subsystem = "windows"]
 
 mod guid;
 mod icon;
@@ -8,20 +8,18 @@ mod window;
 mod xaml;
 
 use std::{
-    io::Write,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
     time::Duration,
 };
 
 use windows::{
-    core::{Result, HSTRING},
+    core::Result,
     Win32::{
         Foundation::HWND,
         System::WinRT::{RoInitialize, RO_INIT_SINGLETHREADED},
         UI::WindowsAndMessaging::{DispatchMessageA, GetMessageA, TranslateMessage, MSG},
     },
-    UI::Xaml::Controls::Primitives::RangeBase,
 };
 
 use guid::ICON_GUID;
@@ -89,14 +87,6 @@ fn brightness_controller_loop(mut monitors: Vec<Monitor>, rx: Receiver<Brightnes
     }
 }
 
-/// Helper function for creating a `HSTRING` from an integer.
-fn num_to_hstring(num: u32) -> HSTRING {
-    let mut buf: [u8; 11] = [0; 11];
-    write!(&mut buf[..], "{}", num).unwrap();
-    let s = std::str::from_utf8(&buf).unwrap();
-    HSTRING::from(s)
-}
-
 fn main() -> Result<()> {
     // Initialize WinRT
     unsafe {
@@ -107,46 +97,22 @@ fn main() -> Result<()> {
     let tx1 = tx.clone();
     let tx2 = tx;
 
-    let window = Window::new(&tx2)?;
+    let monitors = monitor::Monitor::get_monitors()?;
+
+    let window = Window::new(&tx1)?;
     let mut notification_icon = NotificationIcon::new(window.as_handle())?;
     let _power_notify_handle = PowerNotifyHandle::new(window.as_handle())?;
-
-    let xaml_controls = xaml::XamlControls::new(&window)?;
-    let monitor_name = xaml_controls.monitor_name()?;
-    let brightness_number = xaml_controls.brightness_number()?;
-    let slider = xaml_controls.slider()?;
-
-    let monitors = monitor::Monitor::get_monitors()?;
 
     if let Some(monitor) = monitors.first() {
         let brightness = monitor.get_brightness();
         notification_icon.modify_tooltip(brightness)?;
-        monitor_name.SetText(HSTRING::from(monitor.get_name()))?;
-        brightness_number.SetText(num_to_hstring(brightness))?;
-        RangeBase::from(&slider).SetValue(brightness as f64)?;
     }
+
+    let xaml_controls = xaml::XamlControls::new(&window, &monitors, tx2, notification_icon)?;
 
     thread::spawn(move || {
         brightness_controller_loop(monitors, rx);
     });
-
-    // Purposely ignoring the returned event token; It shouldn't be necessary to manually free the
-    // callback
-    RangeBase::from(&slider).ValueChanged(xaml::XamlControls::create_slider_callback(
-        move |_caller, args| {
-            // TODO: Handle multiple monitors.
-            // Slider's ValueChanged callback is run on the main thread
-            if let Some(args) = args {
-                const MONITOR_INDEX: usize = 0;
-                let brightness = args.NewValue()? as u32;
-                let _ = tx1.send(BrightnessEvent::Change(MONITOR_INDEX, brightness));
-
-                brightness_number.SetText(num_to_hstring(brightness))?;
-                notification_icon.modify_tooltip(brightness)?;
-            }
-            Ok(())
-        },
-    ))?;
 
     let mut msg = MSG::default();
     unsafe {

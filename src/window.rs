@@ -13,20 +13,21 @@ use windows::{
             WindowsAndMessaging::{
                 CreateWindowExA, DefWindowProcA, GetWindowLongPtrA, KillTimer, LoadCursorW,
                 PostQuitMessage, RegisterClassExA, SendMessageA, SetForegroundWindow, SetTimer,
-                SetWindowLongPtrA, ShowWindow, CS_DROPSHADOW, GWLP_USERDATA, IDC_ARROW,
-                PBT_POWERSETTINGCHANGE, SW_HIDE, WM_ACTIVATEAPP, WM_CLOSE, WM_CONTEXTMENU,
-                WM_DESTROY, WM_POWERBROADCAST, WM_TIMER, WNDCLASSEXA, WS_EX_NOREDIRECTIONBITMAP,
-                WS_EX_TOOLWINDOW, WS_POPUP, SWP_SHOWWINDOW, SetWindowPos
+                SetWindowLongPtrA, SetWindowPos, ShowWindow, CS_DROPSHADOW, GWLP_USERDATA,
+                IDC_ARROW, PBT_POWERSETTINGCHANGE, SWP_SHOWWINDOW, SW_HIDE, WM_ACTIVATEAPP,
+                WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_POWERBROADCAST, WM_TIMER, WNDCLASSEXA,
+                WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
+    UI::Xaml::Controls::ListBox,
 };
 
 use crate::{BrightnessEvent, NotificationIcon};
 
 /// Calculate the position where the window would be shown. This should be near where the controls
 /// for sound, Wi-Fi, etc.
-fn window_position(width: i32, height: i32) -> (i32, i32) {
+pub fn window_position(width: i32, height: i32) -> (i32, i32) {
     let mut pabd = APPBARDATA {
         cbSize: std::mem::size_of::<APPBARDATA>() as u32,
         ..Default::default()
@@ -111,7 +112,15 @@ impl<'a> Window<'a> {
                                 // Recalculate the position in case the taskbar position was
                                 // changed
                                 let (x, y) = window_position(Window::WIDTH, Window::HEIGHT);
-                                SetWindowPos(hwnd, HWND(0), x, y, Window::WIDTH, Window::HEIGHT, SWP_SHOWWINDOW);
+                                SetWindowPos(
+                                    hwnd,
+                                    HWND(0),
+                                    x,
+                                    y,
+                                    Window::WIDTH,
+                                    Window::HEIGHT,
+                                    SWP_SHOWWINDOW,
+                                );
                                 SetForegroundWindow(hwnd);
                             }
                         }
@@ -194,7 +203,7 @@ impl<'a> Window<'a> {
         if hwnd.0 != 0 {
             // SAFETY: This stores a `&Sender<BrightnessEvent>` to the `HWND` which can later be
             // referenced through `GetWindowLongPtrA`. The `PhantomData` member of `Window` ensures
-            // that it does not exceed the lifetime of the `&Sender<BrightnessEvent>` argument. 
+            // that it does not exceed the lifetime of the `&Sender<BrightnessEvent>` argument.
             unsafe {
                 SetWindowLongPtrA(
                     hwnd,
@@ -215,6 +224,11 @@ impl<'a> Window<'a> {
     pub fn as_handle(&self) -> HWND {
         self.inner
     }
+}
+
+struct WindowData {
+    sender: Sender<BrightnessEvent>,
+    list_box: ListBox
 }
 
 impl<'a> Deref for Window<'a> {
