@@ -2,9 +2,12 @@ use windows::{
     core::Result,
     Win32::{
         Foundation::{HANDLE, HWND},
-        System::{Power::{
-            RegisterPowerSettingNotification, UnregisterPowerSettingNotification, HPOWERNOTIFY,
-        }, SystemServices::GUID_CONSOLE_DISPLAY_STATE},
+        System::{
+            Power::{
+                RegisterPowerSettingNotification, UnregisterPowerSettingNotification, HPOWERNOTIFY,
+            },
+            SystemServices::GUID_CONSOLE_DISPLAY_STATE,
+        },
     },
 };
 

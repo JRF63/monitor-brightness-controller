@@ -107,7 +107,11 @@ impl<'a> XamlControls<'a> {
     pub fn filter_message(&self, message: *const MSG) -> bool {
         let mut processed = BOOL(0);
         unsafe {
-            if let Ok(_) = self.source.PreTranslateMessage(message, &mut processed) {
+            if self
+                .source
+                .PreTranslateMessage(message, &mut processed)
+                .is_ok()
+            {
                 return processed.as_bool();
             }
         }
@@ -197,7 +201,7 @@ fn create_selector_choices(monitors: &[Monitor]) -> Result<ListBox> {
         text_block.SetText(HSTRING::from(monitor.get_name()))?;
         items.Append(text_block)?;
     }
-    if monitors.len() > 0 {
+    if !monitors.is_empty() {
         Selector::from(&list_box).SetSelectedIndex(0)?;
     }
     let num_items = items.Size()? as i32;
@@ -311,11 +315,9 @@ fn set_button_click_event(
                     text_block.SetText(HSTRING::from("Select monitor"))?;
                     text_block.SetFontWeight(FontWeights::Bold()?)?;
                 }
-            } else {
-                if let Some(button) = button {
-                    let button: Button = button.cast()?;
-                    hide_selection(&button, parent, &list_box)?;
-                }
+            } else if let Some(button) = button {
+                let button: Button = button.cast()?;
+                hide_selection(&button, parent, &list_box)?;
             }
             Ok(())
         }))

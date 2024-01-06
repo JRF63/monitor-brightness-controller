@@ -41,26 +41,16 @@ fn brightness_controller_loop(mut monitors: Vec<Monitor>, rx: Receiver<Brightnes
         .map(|m| m.get_brightness())
         .collect::<Vec<_>>();
 
-    'outer: loop {
-        let mut msg = match rx.recv() {
-            Ok(msg) => msg,
-            Err(_) => break,
-        };
-
+    'outer: while let Ok(mut msg) = rx.recv() {
         // Once a message is received, repeatedly `try_recv` until there is no more.
         // This is done so that it will not try to set the brightness one by one for each
         // value sent by the callback.
-        loop {
-            match msg {
-                BrightnessEvent::Change(i, brightness) => {
-                    brightness_vals[i] = brightness;
-                    msg = match rx.try_recv() {
-                        Ok(msg) => msg,
-                        Err(TryRecvError::Empty) => break,
-                        Err(TryRecvError::Disconnected) => break 'outer,
-                    }
-                }
-                BrightnessEvent::Reset => break,
+        while let BrightnessEvent::Change(i, brightness) = msg {
+            brightness_vals[i] = brightness;
+            msg = match rx.try_recv() {
+                Ok(msg) => msg,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break 'outer,
             }
         }
 

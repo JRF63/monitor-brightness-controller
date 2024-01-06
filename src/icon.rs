@@ -63,12 +63,12 @@ impl NotificationIcon {
         };
 
         unsafe {
-            if Shell_NotifyIconA(NIM_ADD, &nid).as_bool() {
-                if Shell_NotifyIconA(NIM_SETVERSION, &nid).as_bool() {
-                    // Set flags for `modify_tooltip`
-                    nid.uFlags = NIF_TIP | NIF_SHOWTIP | NIF_GUID;
-                    return Ok(NotificationIcon(nid));
-                }
+            if Shell_NotifyIconA(NIM_ADD, &nid).as_bool()
+                && Shell_NotifyIconA(NIM_SETVERSION, &nid).as_bool()
+            {
+                // Set flags for `modify_tooltip`
+                nid.uFlags = NIF_TIP | NIF_SHOWTIP | NIF_GUID;
+                return Ok(NotificationIcon(nid));
             }
         }
         Err(windows::core::Error::from_win32())

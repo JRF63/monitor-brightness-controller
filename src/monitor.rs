@@ -172,9 +172,8 @@ fn get_num_physical_monitors(monitor_handle: HMONITOR) -> Result<u32> {
 fn get_physical_monitors(monitor_handle: HMONITOR) -> Result<Vec<PHYSICAL_MONITOR>> {
     let num_physical_monitors = get_num_physical_monitors(monitor_handle)?;
     unsafe {
-        let mut physical_monitors = Vec::new();
-        physical_monitors.reserve(num_physical_monitors as usize);
-        physical_monitors.set_len(num_physical_monitors as usize);
+        let mut physical_monitors =
+            vec![PHYSICAL_MONITOR::default(); num_physical_monitors as usize];
 
         let result = GetPhysicalMonitorsFromHMONITOR(monitor_handle, &mut physical_monitors);
         if result != 0 {
