@@ -1,4 +1,5 @@
-use std::mem::MaybeUninit;
+use std::{mem::MaybeUninit, thread, time::Duration};
+
 use windows::{
     core::Result,
     Win32::{
@@ -28,7 +29,7 @@ impl Drop for Monitor {
 }
 
 impl Monitor {
-    pub fn set_brightness(&mut self, brightness: u32) -> Result<()> {
+    pub fn try_set_brightness(&mut self, brightness: u32) -> Result<()> {
         unsafe {
             let result = SetMonitorBrightness(
                 self.physical_monitor.hPhysicalMonitor,
@@ -43,6 +44,32 @@ impl Monitor {
                 Err(windows::core::Error::from_win32())
             }
         }
+    }
+
+    pub fn set_brightness(&mut self, brightness: u32) -> Result<()> {
+        let expo_backoff = [
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+            Duration::from_millis(40),
+            Duration::from_millis(80),
+            Duration::from_millis(160),
+            Duration::from_millis(320),
+            Duration::from_millis(640),
+            Duration::from_millis(1280),
+        ];
+
+        // Setting the brightness sometimes fail (i.e., when it's done repeatedly without
+        // sleeping). This loop retries it, waiting for increasingly long periods after
+        // each failure.
+        let mut result = Ok(());
+        for duration in expo_backoff {
+            result = self.try_set_brightness(brightness);
+            if result.is_ok() {
+                return Ok(());
+            }
+            thread::sleep(duration);
+        }
+        result
     }
 
     pub fn get_brightness(&self) -> u32 {
@@ -188,19 +215,19 @@ mod tests {
         }
 
         for monitor in &mut monitors {
-            monitor.set_brightness(0).unwrap();
+            monitor.try_set_brightness(0).unwrap();
         }
 
         thread::sleep(duration);
 
         for monitor in &mut monitors {
-            monitor.set_brightness(100).unwrap();
+            monitor.try_set_brightness(100).unwrap();
         }
 
         thread::sleep(duration);
 
         for (monitor, &brightness) in monitors.iter_mut().zip(brightnesses.iter()) {
-            monitor.set_brightness(brightness).unwrap();
+            monitor.try_set_brightness(brightness).unwrap();
         }
     }
 }

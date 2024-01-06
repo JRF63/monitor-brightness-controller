@@ -10,7 +10,6 @@ mod xaml;
 use std::{
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
-    time::Duration,
 };
 
 use windows::{
@@ -66,23 +65,7 @@ fn brightness_controller_loop(mut monitors: Vec<Monitor>, rx: Receiver<Brightnes
         }
 
         for (monitor, brightness) in monitors.iter_mut().zip(brightness_vals.iter()) {
-            let expo_backoff = [
-                Duration::from_millis(10),
-                Duration::from_millis(20),
-                Duration::from_millis(40),
-                Duration::from_millis(80),
-                Duration::from_millis(160),
-            ];
-
-            // Setting the brightness sometimes fail (i.e., when it's done repeatedly without
-            // sleeping). This loop retries it, waiting for increasingly long periods after
-            // each failure.
-            for duration in expo_backoff {
-                if monitor.set_brightness(*brightness).is_ok() {
-                    break;
-                }
-                thread::sleep(duration);
-            }
+            let _ = monitor.set_brightness(*brightness);
         }
     }
 }
