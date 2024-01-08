@@ -36,8 +36,7 @@ impl Monitor {
                 brightness.clamp(self.min_brightness, self.max_brightness),
             );
             if result != 0 {
-                // TODO: Maybe store brightness in Windows registry to allow setting persistence
-                // between runs?
+                // TODO: Maybe store brightness in Windows registry to allow persistence
                 self.current_brightness = brightness;
                 Ok(())
             } else {
@@ -47,16 +46,8 @@ impl Monitor {
     }
 
     pub fn set_brightness(&mut self, brightness: u32) -> Result<()> {
-        let expo_backoff = [
-            Duration::from_millis(10),
-            Duration::from_millis(20),
-            Duration::from_millis(40),
-            Duration::from_millis(80),
-            Duration::from_millis(160),
-            Duration::from_millis(320),
-            Duration::from_millis(640),
-            Duration::from_millis(1280),
-        ];
+        // 10ms, 20ms, 40ms, 80ms, etc.
+        let expo_backoff: [_; 8] = std::array::from_fn(|i| Duration::from_millis(10 * (1 << i)));
 
         // Setting the brightness sometimes fail (i.e., when it's done repeatedly without
         // sleeping). This loop retries it, waiting for increasingly long periods after
@@ -69,6 +60,7 @@ impl Monitor {
             }
             thread::sleep(duration);
         }
+        // Return last result of `try_set_brightness`
         result
     }
 

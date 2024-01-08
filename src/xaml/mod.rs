@@ -128,7 +128,7 @@ impl<'a> XamlControls<'a> {
     ) -> Result<StackPanel> {
         let brush = AcrylicBrush::new()?;
         brush.SetBackgroundSource(AcrylicBackgroundSource::HostBackdrop)?;
-        brush.SetTintColor(windows::UI::Colors::Black()?)?;
+        brush.SetTintColor(windows::UI::ColorHelper::FromArgb(50, 0, 0, 0)?)?;
 
         let xaml_container = StackPanel::new()?;
         Panel::from(&xaml_container).SetBackground(brush.clone())?;
