@@ -6,10 +6,10 @@ The GUI was modeled after Windows 10's volume controller.
 
 ## Images
 
-![bottom](.github/images/monitor-brightness-controller-bottom?raw=true)
-![left](.github/images/monitor-brightness-controller-left?raw=true)
-![right](.github/images/monitor-brightness-controller-right?raw=true)
-![top](.github/images/monitor-brightness-controller-top?raw=true)
+![bottom](.github/images/monitor-brightness-controller-bottom.png?raw=true)
+![left](.github/images/monitor-brightness-controller-left.png?raw=true)
+![right](.github/images/monitor-brightness-controller-right.png?raw=true)
+![top](.github/images/monitor-brightness-controller-top.png?raw=true)
 
 ## Usage
 
