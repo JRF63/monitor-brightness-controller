@@ -14,9 +14,9 @@ use windows::{
                 CreateWindowExA, DefWindowProcA, GetWindowLongPtrA, GetWindowRect, KillTimer,
                 LoadCursorW, PostQuitMessage, RegisterClassExA, SendMessageA, SetForegroundWindow,
                 SetTimer, SetWindowLongPtrA, SetWindowPos, ShowWindow, CS_DROPSHADOW,
-                GWLP_USERDATA, IDC_ARROW, PBT_POWERSETTINGCHANGE, SWP_SHOWWINDOW, SW_HIDE,
-                WM_ACTIVATEAPP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_POWERBROADCAST, WM_TIMER,
-                WNDCLASSEXA, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
+                GWLP_USERDATA, HWND_TOPMOST, IDC_ARROW, PBT_POWERSETTINGCHANGE, SWP_SHOWWINDOW,
+                SW_HIDE, WM_ACTIVATEAPP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_POWERBROADCAST,
+                WM_TIMER, WNDCLASSEXA, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -119,7 +119,7 @@ impl<'a> Window<'a> {
                                     let (x, y) = window_position(width, height);
                                     SetWindowPos(
                                         hwnd,
-                                        HWND(0),
+                                        HWND_TOPMOST,
                                         x,
                                         y,
                                         width,
